@@ -10,6 +10,8 @@ const file = DEPLOYMENTS[DEPLOYMENT_NAME];
 export type Deployment = {
   name: string;
   chainId: number;
+  /** Block of the deployment: logs are searched from here. */
+  block: bigint;
   processor: Address;
   policyCircuit: bigint;
   breakerCircuit: bigint;
@@ -25,6 +27,7 @@ export const DEPLOYMENT: Deployment | null = file
   ? {
       name: DEPLOYMENT_NAME,
       chainId: file.chainId,
+      block: BigInt(file.block ?? 0),
       processor: file.processor,
       policyCircuit: BigInt(file.policyCircuit),
       breakerCircuit: BigInt(file.breakerCircuit),
