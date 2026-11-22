@@ -35,11 +35,16 @@ export function SessionBadge({ chainTime, compact = false }: { chainTime: number
 }
 
 export function BreakerBadge({ b }: { b: BasketInfo }) {
-  const tripped = b.breaker.tripped || b.preview?.tripped;
-  if (tripped)
+  if (b.breaker.tripped)
     return (
       <span className="tag tag-neg" title="Breaker tripped: sell and redeem only" data-testid="breaker">
         <span className="dot" /> Breaker tripped
+      </span>
+    );
+  if (b.preview?.tripped)
+    return (
+      <span className="tag tag-neg" title="The next beat trips the breaker: buying is closed already" data-testid="breaker">
+        <span className="dot" /> Breaker tripping
       </span>
     );
   return (

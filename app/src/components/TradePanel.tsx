@@ -196,11 +196,13 @@ export function TradePanel({ b, markets, onTraded }: { b: BasketInfo; markets: M
 
       {side === "buy" && tripped && (
         <div className="notice notice-neg" data-testid="state-tripped">
-          <strong>Breaker tripped — sell only.</strong> The market-risk circuit closed buying for this basket. It reopens by itself after
-          eight healthy beats; selling and redeeming stay open.
+          <strong>Breaker tripped — sell only.</strong>{" "}
+          {b.breaker.tripped
+            ? "The market-risk circuit closed buying for this basket. It reopens by itself after eight healthy beats; selling and redeeming stay open."
+            : "The market-risk circuit sees an unhealthy market now (see the breaker facts below): its next beat trips the basket, so buying is closed. Selling and redeeming stay open."}
         </div>
       )}
-      {side === "buy" && !tripped && stocksClosed && allStocks && (
+      {side === "buy" && stocksClosed && allStocks && (
         <div className="notice notice-warn" data-testid="state-closed">
           <strong>US market closed — buys reopen Monday 01:00 UTC</strong> (in {countdown(reopen - t)}). xStocks follow the US equities 24/5
           session.
