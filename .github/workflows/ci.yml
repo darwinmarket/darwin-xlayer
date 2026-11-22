@@ -26,6 +26,6 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
       - run: forge build --sizes
         working-directory: contracts
-      - name: fork tests against X Layer mainnet
-        run: forge test -vv
+      - name: fork tests against X Layer mainnet (weekday and Sunday blocks, invariants)
+        run: forge test
         working-directory: contracts
