@@ -1,180 +1,166 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {Test, Vm} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {DarwinOracle} from "../src/DarwinOracle.sol";
 import {DarwinGuard} from "../src/DarwinGuard.sol";
 import {DarwinBasket} from "../src/DarwinBasket.sol";
 import {DarwinRouter} from "../src/DarwinRouter.sol";
+import {DarwinStudio} from "../src/DarwinStudio.sol";
+import {XLayer} from "../script/XLayer.sol";
 import {
-    IAggregator,
-    IBeacon,
-    ISwapRouter02,
-    ITapeoutFactory,
-    ITapeoutProcessor,
-    ITransistors,
-    IUniswapV3Pool
+    IAggregator, IBeacon, ISwapRouter02, ITapeoutFactory, ITapeoutProcessor, ITransistors
 } from "../src/interfaces/External.sol";
 
 /// Everything on a fork of X Layer mainnet: the real TapeOut factory (a fresh processor of ours,
-/// our circuits taped out on it), the real Chainlink feeds, the real Uniswap v3 pools.
+/// our circuits taped out on it), the real Chainlink feeds, the real Uniswap v3 pools and xStocks.
 abstract contract XLayerFork is Test {
-    // ---- X Layer mainnet ----
-    address constant USDG = 0x4ae46a509F6b1D9056937BA4500cb143933D2dc8;
-    address constant USDT0 = 0x779Ded0c9e1022225f8E0630b35a9b54bE713736;
-    address constant USDC = 0xB6CEceAB302E2E4948951eE7843FC24E92933061;
-    address constant XBTC = 0xb7C00000bcDEeF966b20B3D884B98E64d2b06b4f;
-    address constant XETH = 0xE7B000003A45145decf8a28FC755aD5eC5EA025A;
-    address constant XSOL = 0x505000008DE8748DBd4422ff4687a4FC9bEba15b;
-    address constant WOKB = 0xe538905cf8410324e03A5A23C1c177a474D59b2b;
+    address constant USDG = XLayer.USDG;
+    address constant USDT0 = XLayer.USDT0;
+    address constant USDC = XLayer.USDC;
+    address constant XBTC = XLayer.XBTC;
+    address constant XETH = XLayer.XETH;
+    address constant XSOL = XLayer.XSOL;
+    address constant WOKB = XLayer.WOKB;
+    address constant WNVDAX = XLayer.WNVDAX;
+    address constant WSPYX = XLayer.WSPYX;
+    address constant WQQQX = XLayer.WQQQX;
+    address constant WTSLAX = XLayer.WTSLAX;
+    address constant WSPCXX = XLayer.WSPCXX;
+    address constant WAAPLX = XLayer.WAAPLX;
+    address constant WGOOGLX = XLayer.WGOOGLX;
+    address constant WCRCLX = XLayer.WCRCLX;
+    address constant WMSTRX = XLayer.WMSTRX;
 
-    address constant POOL_XBTC = 0x520F8c07A529FFb5230e76bCb8EA553D664e5b76;
-    address constant POOL_XETH = 0x6E18CEbFb9C5BBcf127b97a6daB026E941FfF6D5;
-    address constant POOL_XSOL = 0x1284d2df2bF7DaC317D219d055Bd16F8259E06Df;
-    address constant POOL_WOKB = 0x5d7E3Ad08B0C52e460787677B0632Cd024Df437C;
-    address constant POOL_USDT0 = 0x0cBe0dBE1400e57f371a38BD3b9bC80F7C3676dA;
-    address constant POOL_USDC = 0xbB9a35F790EA6eA9763b99e885f33BCF95860d40;
+    /// Friday 2026-11-20 16:00 UTC: US stocks in session, every feed live.
+    uint256 constant WEEKDAY_BLOCK = 76_421_394;
+    /// Sunday 2026-11-22 12:00 UTC: stocks closed, crypto open.
+    uint256 constant WEEKEND_BLOCK = 76_579_805;
 
-    address constant FEED_BTC = 0x4D6f6488a2B3a5f7b088f276887f608a1e9805c4;
-    address constant FEED_ETH = 0x8b85b50535551F8E8cDAF78dA235b5Cf1005907b;
-    address constant FEED_SOL = 0xF959E1B5cA535C28aD24F7f672Bf1A93900810cF;
-    address constant FEED_OKB = 0x4Ff345b18a2bF894F8627F41501FBf30d5C5e7BE;
-    address constant FEED_USDG = 0x385C6bDDE06b0E438319bF4ddBfFe51C521ABf3D;
-    address constant FEED_USDT0 = 0x673b428Fd1df93a6F77fA7ea1F8eeD8A4Ff36b9f;
-    address constant FEED_USDC = 0xB8a08c178D96C315FbFB5661ABD208477391BC40;
-    address constant FEED_XBTC_BTC = 0x265342dc2EDD57c05c1410115E8fA5E02a7C0886;
-    address constant FEED_SEQUENCER = 0x45c2b8C204568A03Dc7A2E32B71D67Fe97F908A9;
-
-    address constant SWAP_ROUTER = 0x4f0C28f5926AFDA16bf2506D5D9e57Ea190f9bcA;
-    address constant TAPEOUT_FACTORY = 0x1f09DAeFA827f02CBb40967cc91b259763760761;
-    address constant TAPEOUT_BEACON = 0xf70d1ed4f62CF3780157B0b421b7E2F45bD0991C;
-
-    address constant BEM = 0x60e62Efa9405d6873C5deaBD4E6CC91c25363952; // TapeOut's token: pays the processor deploy fee
-
-    uint256 constant FORK_BLOCK = 76_612_000;
-
-    // ---- deployed in setUp ----
     ITapeoutProcessor processor;
     DarwinOracle oracle;
     DarwinGuard guard;
     DarwinRouter router;
+    DarwinStudio studio;
+    uint256 policyId;
+    uint256 breakerId;
+    mapping(string => DarwinBasket) basket;
+    mapping(string => bytes32) circuitHash;
+    mapping(string => uint256) circuitId;
+
     DarwinBasket blue;
     DarwinBasket bal;
     DarwinBasket okx;
-    uint256 policyId;
-    uint256 breakerId;
-    mapping(string => uint256) circuitId;
-    mapping(string => bytes32) circuitHash;
+    DarwinBasket tech;
+    DarwinBasket core;
+    DarwinBasket frontier;
+    DarwinBasket cryptoEq;
+    DarwinBasket allWeather;
 
     address owner = makeAddr("owner");
     address treasury = makeAddr("treasury");
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
 
+    function forkBlock() internal view virtual returns (uint256) {
+        return WEEKDAY_BLOCK;
+    }
+
     function setUp() public virtual {
-        vm.createSelectFork(vm.rpcUrl("xlayer"), FORK_BLOCK);
+        vm.createSelectFork(vm.rpcUrl("xlayer"), forkBlock());
         vm.deal(owner, 100 ether);
 
-        // a processor of our own on the real TapeOut factory, and our circuits taped out on it
+        // a processor of our own on the real TapeOut factory (0.1 BEM), transistors for our circuits
         vm.startPrank(owner);
-        deal(BEM, owner, 100e8);
-        IERC20(BEM).approve(TAPEOUT_FACTORY, type(uint256).max);
-        (address transistors, address circuits) = ITapeoutFactory(TAPEOUT_FACTORY).createCPU(
-            "Darwin", "DRWN", "Darwin index circuits", 100_000, 0
-        );
-        IERC20(BEM).approve(transistors, type(uint256).max);
-        IERC20(BEM).approve(circuits, type(uint256).max);
+        deal(XLayer.BEM, owner, 100e8);
+        IERC20(XLayer.BEM).approve(XLayer.TAPEOUT_FACTORY, type(uint256).max);
+        (address transistors, address circuits) =
+            ITapeoutFactory(XLayer.TAPEOUT_FACTORY).createCPU("Darwin", "DRWN", "Darwin index circuits", 1_000_000, 0);
+        IERC20(XLayer.BEM).approve(transistors, type(uint256).max);
+        IERC20(XLayer.BEM).approve(circuits, type(uint256).max);
         processor = ITapeoutProcessor(circuits);
+        ITransistors(transistors).mint(0, 20_000);
+        ITransistors(transistors).mint(1, 100);
         policyId = _tapeout("darwin-trade-policy");
         breakerId = _tapeout("darwin-breaker");
-        _tapeout("darwin-bluechip");
-        _tapeout("darwin-balanced");
-        _tapeout("darwin-okx-ecosystem");
         vm.stopPrank();
 
-        oracle = new DarwinOracle(USDG, IAggregator(FEED_SEQUENCER), _markets());
+        oracle = new DarwinOracle(USDG, IAggregator(XLayer.FEED_SEQUENCER), XLayer.markets());
         guard = new DarwinGuard(
             processor,
-            IBeacon(TAPEOUT_BEACON),
+            IBeacon(XLayer.TAPEOUT_BEACON),
             oracle,
             policyId,
             circuitHash["darwin-trade-policy"],
             breakerId,
             circuitHash["darwin-breaker"]
         );
-        router = new DarwinRouter(guard, ISwapRouter02(SWAP_ROUTER), treasury);
+        router = new DarwinRouter(guard, ISwapRouter02(XLayer.SWAP_ROUTER), treasury);
+        studio = new DarwinStudio(guard, address(router));
+        vm.prank(owner);
+        IERC1155(transistors).safeTransferFrom(owner, address(studio), 0, 10_000, "");
 
-        blue = _basket("Darwin Blue Chip", "BLUEdw", "darwin-bluechip", _three(XBTC, XETH, XSOL));
-        bal = _basket("Darwin Balanced", "BALdw", "darwin-balanced", _three(XBTC, XETH, USDG));
-        okx = _basket("Darwin OKX Ecosystem", "OKXdw", "darwin-okx-ecosystem", _three(WOKB, XBTC, XETH));
-        _seed(blue, 50e18);
-        _seed(bal, 50e18);
-        _seed(okx, 50e18);
+        // Darwin's own strategies, launched through the studio like anyone's
+        blue = _launch("Darwin Blue Chip", "BLUEdw", "darwin-bluechip", _list3(XBTC, XETH, XSOL));
+        bal = _launch("Darwin Balanced", "BALdw", "darwin-balanced", _list3(XBTC, XETH, USDG));
+        okx = _launch("Darwin OKX Ecosystem", "OKXdw", "darwin-okx-ecosystem", _list3(WOKB, XBTC, XETH));
+        address[] memory t5 = new address[](5);
+        (t5[0], t5[1], t5[2], t5[3], t5[4]) = (WNVDAX, WQQQX, WAAPLX, WGOOGLX, WTSLAX);
+        tech = _launch("Darwin US Tech", "TECHdw", "darwin-us-tech", t5);
+        address[] memory c2 = new address[](2);
+        (c2[0], c2[1]) = (WSPYX, WQQQX);
+        core = _launch("Darwin US Core", "COREdw", "darwin-us-core", c2);
+        frontier = _launch("Darwin Frontier", "FRONTdw", "darwin-frontier", _list3(WSPCXX, WTSLAX, WNVDAX));
+        cryptoEq = _launch("Darwin Crypto Equities", "CRYPTOEQdw", "darwin-crypto-equities", _list3(WCRCLX, WMSTRX, XBTC));
+        address[] memory a4 = new address[](4);
+        (a4[0], a4[1], a4[2], a4[3]) = (WSPYX, XBTC, XETH, USDG);
+        allWeather = _launch("Darwin All Weather", "ALLdw", "darwin-all-weather", a4);
+
+        // the first buy of each basket (the stock ones need an open market)
+        _firstBuys();
+    }
+
+    function _firstBuys() internal virtual {
+        DarwinBasket[8] memory all = [blue, bal, okx, tech, core, frontier, cryptoEq, allWeather];
+        for (uint256 i; i < all.length; i++) {
+            _buy(owner, all[i], USDG, 50e6);
+        }
     }
 
     // ---- helpers ---------------------------------------------------------------------------------
 
-    function _tapeout(string memory name) internal returns (uint256 id) {
+    function _netlist(string memory name) internal view returns (bytes memory nl, uint32 nIn, uint32 nOut) {
         string memory json = vm.readFile(string.concat("../circuits/build/", name, ".json"));
-        bytes memory nl = vm.parseJsonBytes(json, ".netlist");
-        uint256 nIn = vm.parseJsonUint(json, ".nIn");
-        uint256 nOut = vm.parseJsonUint(json, ".nOut");
-        uint256 nand = vm.parseJsonUint(json, ".nand");
-        uint256 latch = vm.parseJsonUint(json, ".latch");
-        // the price of a transistor is in OKB (ours is free); TapeOut's protocol fee is paid in BEM
-        ITransistors t = ITransistors(processor.transistors());
-        t.mint{value: nand * t.mintPrice()}(0, nand);
-        if (latch > 0) t.mint{value: latch * t.mintPrice()}(1, latch);
-        id = processor.tapeout{value: processor.TAPEOUT_FEE()}(nl, uint32(nIn), uint32(nOut));
+        nl = vm.parseJsonBytes(json, ".netlist");
+        nIn = uint32(vm.parseJsonUint(json, ".nIn"));
+        nOut = uint32(vm.parseJsonUint(json, ".nOut"));
+    }
+
+    function _tapeout(string memory name) internal returns (uint256 id) {
+        (bytes memory nl, uint32 nIn, uint32 nOut) = _netlist(name);
+        id = processor.tapeout{value: processor.TAPEOUT_FEE()}(nl, nIn, nOut);
         circuitId[name] = id;
         circuitHash[name] = keccak256(nl);
     }
 
-    function _markets() internal pure returns (DarwinOracle.Market[] memory m) {
-        m = new DarwinOracle.Market[](7);
-        m[0] = _m(USDG, 6, FEED_USDG, address(0), 0, address(0));
-        m[1] = _m(XBTC, 8, FEED_BTC, POOL_XBTC, 500, FEED_XBTC_BTC);
-        m[2] = _m(XETH, 18, FEED_ETH, POOL_XETH, 500, address(0));
-        m[3] = _m(XSOL, 9, FEED_SOL, POOL_XSOL, 500, address(0));
-        m[4] = _m(WOKB, 18, FEED_OKB, POOL_WOKB, 500, address(0));
-        m[5] = _m(USDT0, 6, FEED_USDT0, POOL_USDT0, 100, address(0));
-        m[6] = _m(USDC, 6, FEED_USDC, POOL_USDC, 100, address(0));
-    }
-
-    function _m(address token, uint8 dec, address feed, address pool, uint24 fee, address reserve)
-        internal
-        pure
-        returns (DarwinOracle.Market memory)
-    {
-        return DarwinOracle.Market(token, dec, IAggregator(feed), 86_400, IUniswapV3Pool(pool), fee, IAggregator(reserve));
-    }
-
-    function _three(address a, address b, address c) internal pure returns (address[] memory x) {
-        x = new address[](3);
-        (x[0], x[1], x[2]) = (a, b, c);
-    }
-
-    function _basket(string memory name, string memory sym, string memory method, address[] memory coins)
+    function _launch(string memory name, string memory sym, string memory method, address[] memory coins)
         internal
         returns (DarwinBasket b)
     {
-        b = new DarwinBasket(name, sym, owner, address(router), guard, coins, circuitId[method], circuitHash[method]);
+        (bytes memory nl,,) = _netlist(method);
+        uint256 fee = studio.launchFee();
+        vm.prank(owner);
+        b = studio.createStrategy{value: fee}(name, sym, coins, nl);
+        circuitId[method] = studio.circuitOf(address(b));
+        circuitHash[method] = keccak256(nl);
+        basket[sym] = b;
     }
 
-    /// Seed a basket with `usd` (18 decimals) split by its targets, bought at the oracle price.
-    function _seed(DarwinBasket b, uint256 usd) internal {
-        address[] memory coins = b.coinList();
-        (uint256[] memory t,) = b.targets();
-        uint256[] memory amounts = new uint256[](coins.length);
-        vm.startPrank(owner);
-        for (uint256 i; i < coins.length; i++) {
-            amounts[i] = oracle.amountFor(coins[i], usd * t[i] / 10_000);
-            deal(coins[i], owner, amounts[i]);
-            IERC20(coins[i]).approve(address(b), amounts[i]);
-        }
-        b.seed(amounts);
-        vm.stopPrank();
+    function _list3(address a, address b, address c) internal pure returns (address[] memory x) {
+        x = new address[](3);
+        (x[0], x[1], x[2]) = (a, b, c);
     }
 
     function _fund(address who, address token, uint256 amount) internal {
@@ -203,10 +189,11 @@ abstract contract XLayerFork is Test {
 
     /// Make a Chainlink feed answer `answer` (feed decimals) updated `age` seconds ago.
     function _mockFeed(address feed, int256 answer, uint256 age) internal {
+        uint256 now_ = vm.getBlockTimestamp();
         vm.mockCall(
             feed,
             abi.encodeWithSelector(IAggregator.latestRoundData.selector),
-            abi.encode(uint80(1), answer, block.timestamp - age, block.timestamp - age, uint80(1))
+            abi.encode(uint80(1), answer, now_ - age, now_ - age, uint80(1))
         );
     }
 
@@ -219,10 +206,42 @@ abstract contract XLayerFork is Test {
         address whale = makeAddr("whale");
         deal(tokenIn, whale, amount);
         vm.startPrank(whale);
-        IERC20(tokenIn).approve(SWAP_ROUTER, amount);
-        ISwapRouter02(SWAP_ROUTER).exactInputSingle(
+        IERC20(tokenIn).approve(XLayer.SWAP_ROUTER, amount);
+        ISwapRouter02(XLayer.SWAP_ROUTER).exactInputSingle(
             ISwapRouter02.ExactInputSingleParams(tokenIn, tokenOut, fee, whale, amount, 0, 0)
         );
         vm.stopPrank();
+    }
+
+    /// Every feed answered a minute ago and the sequencer has been up for a month (after a warp).
+    function _refreshFeeds() internal {
+        address[15] memory feeds = [
+            XLayer.FEED_BTC,
+            XLayer.FEED_ETH,
+            XLayer.FEED_SOL,
+            XLayer.FEED_OKB,
+            XLayer.FEED_USDG,
+            XLayer.FEED_USDT0,
+            XLayer.FEED_USDC,
+            XLayer.FEED_XBTC_BTC,
+            XLayer.FEED_WNVDAX,
+            XLayer.FEED_WSPYX,
+            XLayer.FEED_WQQQX,
+            XLayer.FEED_WTSLAX,
+            XLayer.FEED_WAAPLX,
+            XLayer.FEED_WGOOGLX,
+            XLayer.FEED_WSPCXX
+        ];
+        for (uint256 i; i < feeds.length; i++) {
+            _mockFeed(feeds[i], _feedAnswer(feeds[i]), 60);
+        }
+        _mockFeed(XLayer.FEED_WCRCLX, _feedAnswer(XLayer.FEED_WCRCLX), 60);
+        _mockFeed(XLayer.FEED_WMSTRX, _feedAnswer(XLayer.FEED_WMSTRX), 60);
+        uint256 now_ = vm.getBlockTimestamp();
+        vm.mockCall(
+            XLayer.FEED_SEQUENCER,
+            abi.encodeWithSignature("latestRoundData()"),
+            abi.encode(uint80(1), int256(0), now_ - 30 days, now_ - 30 days, uint80(1))
+        );
     }
 }

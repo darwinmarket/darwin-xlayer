@@ -8,16 +8,17 @@ import {DarwinBasket} from "../src/DarwinBasket.sol";
 import {DarwinGuard} from "../src/DarwinGuard.sol";
 import {DarwinRouter} from "../src/DarwinRouter.sol";
 import {IBeacon, ITapeoutProcessor} from "../src/interfaces/External.sol";
+import {XLayer} from "../script/XLayer.sol";
 
 contract ForkTest is XLayerFork {
     // ---- the circuits on the real TapeOut processor ----------------------------------------------
 
     function test_circuitsTapedOutOnTheRealProcessor() public view {
         (uint32 nIn, uint32 nOut, uint32 nState, uint32 gates) = processor.circuitInfo(policyId);
-        assertEq(nIn, 13);
+        assertEq(nIn, 14);
         assertEq(nOut, 3);
         assertEq(nState, 0);
-        assertEq(gates, 101);
+        assertEq(gates, 105);
         (nIn, nOut, nState, gates) = processor.circuitInfo(breakerId);
         assertEq(nState, 4);
         assertEq(keccak256(processor.netlist(policyId)), circuitHash["darwin-trade-policy"]);
@@ -39,7 +40,7 @@ contract ForkTest is XLayerFork {
         internal
         view
     {
-        (bool a, uint8 s) = guard.policy(DarwinGuard.Leg(dev, age, seq, isBuy, drift, better));
+        (bool a, uint8 s) = guard.policy(DarwinGuard.Leg(dev, age, seq, isBuy, drift, better, true));
         assertEq(a, allow, "allow");
         assertEq(s, sev, "severity");
     }
@@ -87,12 +88,17 @@ contract ForkTest is XLayerFork {
     }
 
     function test_buyThenSellRoundTrip() public {
+        uint256 t0 = IERC20(USDG).balanceOf(treasury);
+        uint256 c0 = IERC20(USDG).balanceOf(owner);
         uint256 shares = _buy(alice, blue, USDG, 1_000e6);
         uint256 out = _sell(alice, blue, shares, USDG);
         // two 0.30% fees and two pool crossings
         assertGe(out, 985e6, "round trip keeps >= 98.5%");
         assertEq(blue.balanceOf(alice), 0);
-        assertGt(IERC20(USDG).balanceOf(treasury), 5e6, "fees reached the treasury");
+        uint256 toTreasury = IERC20(USDG).balanceOf(treasury) - t0;
+        uint256 toCreator = IERC20(USDG).balanceOf(owner) - c0;
+        assertApproxEqRel(toTreasury + toCreator, 5.98e6, 0.01e18, "0.30% twice");
+        assertApproxEqRel(toCreator * 3, toTreasury + toCreator, 0.01e18, "a third to the strategy's creator");
     }
 
     function test_sellToUsdt0() public {
@@ -146,7 +152,7 @@ contract ForkTest is XLayerFork {
 
     function test_sequencerDownClosesBuying() public {
         vm.mockCall(
-            FEED_SEQUENCER,
+            XLayer.FEED_SEQUENCER,
             abi.encodeWithSignature("latestRoundData()"),
             abi.encode(uint80(1), int256(1), block.timestamp - 10, block.timestamp - 10, uint80(1))
         );
@@ -159,7 +165,7 @@ contract ForkTest is XLayerFork {
 
     function test_staleFeedTripsTheBreakerButExitsStayOpen() public {
         uint256 shares = _buy(alice, blue, USDG, 1_000e6);
-        _mockFeed(FEED_SOL, _feedAnswer(FEED_SOL), 86_400 + 3 hours); // stale beyond grace
+        _mockFeed(XLayer.FEED_SOL, _feedAnswer(XLayer.FEED_SOL), 86_400 + 3 hours); // stale beyond grace
         guard.poke(address(blue));
         (uint8 state,) = guard.breakers(address(blue));
         assertEq(state & 1, 1, "tripped");
@@ -176,7 +182,7 @@ contract ForkTest is XLayerFork {
     }
 
     function test_breakerResetsOnlyAfterEightHealthyBeats() public {
-        _mockFeed(FEED_SOL, _feedAnswer(FEED_SOL), 86_400 + 3 hours);
+        _mockFeed(XLayer.FEED_SOL, _feedAnswer(XLayer.FEED_SOL), 86_400 + 3 hours);
         guard.poke(address(blue));
         vm.clearMockedCalls();
         uint256 t = vm.getBlockTimestamp(); // not block.timestamp: via-ir may reuse a cached value
@@ -198,24 +204,12 @@ contract ForkTest is XLayerFork {
         guard.poke(address(blue));
     }
 
-    function _refreshFeeds() internal {
-        address[6] memory feeds = [FEED_BTC, FEED_ETH, FEED_SOL, FEED_OKB, FEED_USDG, FEED_XBTC_BTC];
-        for (uint256 i; i < feeds.length; i++) {
-            _mockFeed(feeds[i], _feedAnswer(feeds[i]), 60);
-        }
-        vm.mockCall(
-            FEED_SEQUENCER,
-            abi.encodeWithSignature("latestRoundData()"),
-            abi.encode(uint80(1), int256(0), block.timestamp - 30 days, block.timestamp - 30 days, uint80(1))
-        );
-    }
-
     // ---- pinning ---------------------------------------------------------------------------------
 
     function test_processorUpgradeFailsClosed() public {
-        vm.mockCall(TAPEOUT_BEACON, abi.encodeWithSelector(IBeacon.implementation.selector), abi.encode(address(0xBEEF)));
+        vm.mockCall(XLayer.TAPEOUT_BEACON, abi.encodeWithSelector(IBeacon.implementation.selector), abi.encode(address(0xBEEF)));
         vm.expectRevert(abi.encodeWithSelector(DarwinGuard.ProcessorUpgraded.selector, address(0xBEEF)));
-        guard.policy(DarwinGuard.Leg(0, 0, true, true, 0, false));
+        guard.policy(DarwinGuard.Leg(0, 0, true, true, 0, false, true));
         _fund(alice, USDG, 100e6);
         vm.prank(alice);
         vm.expectRevert();
@@ -224,16 +218,17 @@ contract ForkTest is XLayerFork {
 
     function test_wrongCircuitHashIsRejected() public {
         vm.expectRevert(abi.encodeWithSelector(DarwinGuard.CircuitMismatch.selector, policyId));
-        new DarwinGuard(processor, IBeacon(TAPEOUT_BEACON), oracle, policyId, bytes32(uint256(1)), breakerId, circuitHash["darwin-breaker"]);
+        new DarwinGuard(processor, IBeacon(XLayer.TAPEOUT_BEACON), oracle, policyId, bytes32(uint256(1)), breakerId, circuitHash["darwin-breaker"]);
     }
 
     function test_methodologyChangeWaitsForTheTimelock() public {
         uint256 newId = circuitId["darwin-okx-ecosystem"]; // a different weight set
         vm.prank(owner);
         blue.proposeMethodology(newId, circuitHash["darwin-okx-ecosystem"]);
+        uint256 t0 = vm.getBlockTimestamp();
         vm.expectRevert();
         blue.applyMethodology();
-        vm.warp(block.timestamp + 3 days);
+        vm.warp(t0 + 3 days);
         _refreshFeeds();
         blue.applyMethodology();
         assertEq(blue.methodologyId(), newId);
