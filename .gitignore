@@ -1,0 +1,13 @@
+node_modules/
+.env
+.env.*
+!.env.example
+*.key
+contracts/out/
+contracts/cache/
+contracts/broadcast/*/31337/
+app/.next/
+app/.vercel/
+.DS_Store
+*.log
+*.tsbuildinfo
