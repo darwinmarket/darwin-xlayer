@@ -1,0 +1,9 @@
+{
+  "name": "@darwin-xlayer/circuits",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node src/build.ts",
+    "test": "node --test test/*.test.ts"
+  }
+}

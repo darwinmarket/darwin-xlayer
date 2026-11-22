@@ -1,0 +1,157 @@
+/**
+ * Darwin's three TapeOut circuits. Their input layouts are mirrored bit for bit by the contracts
+ * (contracts/src/DarwinGuard.sol); every number is quantised on chain before it reaches a circuit.
+ */
+import { Builder, type Circuit, type Sig, ONE } from "./netlist.ts";
+
+// ---- 1. Trade policy (combinational, one call per coin of a trade) ------------------------------
+/**
+ * Inputs (13 bits, LSB first):
+ *   0..3   dev      |execution price - Chainlink price| in 0.25% steps, saturating at 15 (>= 3.75%)
+ *   4..5   age      0: < 1 h, 1: < heartbeat, 2: < heartbeat + grace, 3: older
+ *   6      seqUp    the X Layer sequencer is up and past its grace period
+ *   7      isBuy    1 for a buy leg, 0 for a sell leg
+ *   8..11  drift    |weight after the trade - target| in 1 pp steps, saturating at 15
+ *   12     better   the trade does not move the coin further from its target
+ * Outputs (3 bits): allow, severity (2 bits: 0 clean, 1 allowed with a warning, 2 refused, 3 refused: market broken)
+ */
+export const POLICY = {
+  maxDevBuy: 8, // 2.00%
+  maxDevSell: 12, // 3.00%
+  cleanDev: 4, // 1.00%
+  band: 5, // 5 pp
+};
+export const POLICY_IN = { dev: 0, age: 4, seqUp: 6, isBuy: 7, drift: 8, better: 12, n: 13 };
+
+export function tradePolicy(): Circuit {
+  const b = new Builder(POLICY_IN.n);
+  const dev = b.inputs(POLICY_IN.dev, 4);
+  const age = b.inputs(POLICY_IN.age, 2);
+  const seqUp = b.input(POLICY_IN.seqUp);
+  const isBuy = b.input(POLICY_IN.isBuy);
+  const drift = b.inputs(POLICY_IN.drift, 4);
+  const better = b.input(POLICY_IN.better);
+
+  const ageLe1 = b.leConst(age, 1);
+  const ageLe2 = b.leConst(age, 2);
+  const ageOk = b.mux(isBuy, ageLe1, ageLe2);
+  const devOk = b.mux(isBuy, b.leConst(dev, POLICY.maxDevBuy), b.leConst(dev, POLICY.maxDevSell));
+  const driftOk = b.or(b.not(isBuy), b.or(b.leConst(drift, POLICY.band), better));
+  const allow = b.andAll([seqUp, ageOk, devOk, driftOk]);
+
+  const clean = b.andAll([allow, b.leConst(dev, POLICY.cleanDev), ageLe1]);
+  const hard = b.or(b.not(seqUp), b.not(ageLe2)); // the market itself is broken
+  // severity: clean 0, warned 1 (allow & !clean), refused 2 (!allow & !hard), broken 3 (hard)
+  const sev0 = b.or(b.and(allow, b.not(clean)), hard);
+  const sev1 = b.not(allow);
+  return b.build("darwin-trade-policy", [allow, sev0, sev1]);
+}
+
+/** The reference model the circuit must match on every one of its 8,192 inputs. */
+export function tradePolicyModel(i: { dev: number; age: number; seqUp: number; isBuy: number; drift: number; better: number }) {
+  const ageOk = i.isBuy ? i.age <= 1 : i.age <= 2;
+  const devOk = i.dev <= (i.isBuy ? POLICY.maxDevBuy : POLICY.maxDevSell);
+  const driftOk = !i.isBuy || i.drift <= POLICY.band || i.better === 1;
+  const allow = i.seqUp === 1 && ageOk && devOk && driftOk;
+  const hard = i.seqUp === 0 || i.age === 3;
+  const clean = allow && i.dev <= POLICY.cleanDev && i.age <= 1;
+  const severity = hard ? 3 : !allow ? 2 : clean ? 0 : 1;
+  return { allow: allow ? 1 : 0, severity };
+}
+
+// ---- 2. Market-risk breaker (stateful: one LATCH for "tripped", three for a counter) ------------
+/**
+ * Inputs (5 bits): 0 feedsFresh, 1 seqUp, 2 pegsOk, 3 pricesOk (every pool within the band of its
+ * oracle), 4 reservesOk (wrapped assets backed: xBTC/BTC exchange rate).
+ * State (4 bits): tripped, counter (3 bits).
+ * Outputs (4 bits): tripped, counter (3 bits), after this beat.
+ *
+ * Any unhealthy beat trips the breaker and clears the counter. While tripped, each healthy beat
+ * counts; the eighth healthy beat in a row resets it. Nobody can reset it by hand.
+ */
+export const BREAKER_IN = { feedsFresh: 0, seqUp: 1, pegsOk: 2, pricesOk: 3, reservesOk: 4, n: 5 };
+export const BREAKER_HEALTHY_BEATS = 8;
+
+export function breaker(): Circuit {
+  const b = new Builder(BREAKER_IN.n);
+  const healthy = b.andAll(b.inputs(0, BREAKER_IN.n));
+  const t = b.latch();
+  const c = [b.latch(), b.latch(), b.latch()];
+  const counter = c.map((l) => l.q);
+  const full = b.eqConst(counter, BREAKER_HEALTHY_BEATS - 1);
+  // next tripped = !healthy | (tripped & !(full & healthy))
+  const tNext = b.or(b.not(healthy), b.and(t.q, b.not(b.and(full, healthy))));
+  // next counter = (healthy & tripped) ? counter + 1 (wraps to 0 on the reset beat) : 0
+  const counting = b.and(healthy, t.q);
+  const plus = b.inc(counter);
+  const cNext = plus.map((p) => b.and(counting, p));
+  t.connect(tNext);
+  c.forEach((l, i) => l.connect(cNext[i]));
+  return b.build("darwin-breaker", [tNext, ...cNext]);
+}
+
+export function breakerModel(state: { tripped: number; counter: number }, healthy: boolean) {
+  if (!healthy) return { tripped: 1, counter: 0 };
+  if (!state.tripped) return { tripped: 0, counter: 0 };
+  if (state.counter === BREAKER_HEALTHY_BEATS - 1) return { tripped: 0, counter: 0 };
+  return { tripped: 1, counter: state.counter + 1 };
+}
+
+// ---- 3. Index methodology (one circuit per basket) ----------------------------------------------
+/**
+ * Inputs (4 bits): 0..2 coin index, 3 eligible (the coin's feed is healthy and its pool deep enough).
+ * Outputs (11 bits): target weight in percent (7 bits), allowed band in pp (4 bits).
+ * An ineligible coin gets a 0% target, so new money goes to the others until it recovers.
+ */
+export type Methodology = { name: string; coins: { symbol: string; weight: number }[]; band: number };
+
+export const METHODOLOGIES: Methodology[] = [
+  {
+    name: "darwin-bluechip",
+    coins: [
+      { symbol: "xBTC", weight: 50 },
+      { symbol: "xETH", weight: 30 },
+      { symbol: "xSOL", weight: 20 },
+    ],
+    band: 5,
+  },
+  {
+    name: "darwin-balanced",
+    coins: [
+      { symbol: "xBTC", weight: 35 },
+      { symbol: "xETH", weight: 35 },
+      { symbol: "USDG", weight: 30 },
+    ],
+    band: 5,
+  },
+  {
+    name: "darwin-okx-ecosystem",
+    coins: [
+      { symbol: "WOKB", weight: 50 },
+      { symbol: "xBTC", weight: 25 },
+      { symbol: "xETH", weight: 25 },
+    ],
+    band: 5,
+  },
+];
+
+export const METHOD_IN = { index: 0, eligible: 3, n: 4 };
+
+export function methodology(m: Methodology): Circuit {
+  if (m.coins.length > 8) throw new Error("at most 8 coins");
+  if (m.coins.reduce((s, c) => s + c.weight, 0) !== 100) throw new Error(`${m.name}: weights must sum to 100`);
+  const b = new Builder(METHOD_IN.n);
+  const idx = b.inputs(METHOD_IN.index, 3);
+  const eligible = b.input(METHOD_IN.eligible);
+  const sel = m.coins.map((_, i) => b.and(b.eqConst(idx, i), eligible));
+  const known = b.orAll(m.coins.map((_, i) => b.eqConst(idx, i)));
+  const weight: Sig[] = [];
+  for (let bit = 0; bit < 7; bit++) weight.push(b.orAll(m.coins.map((c, i) => (((c.weight >> bit) & 1) ? sel[i] : 0)).filter((s) => s !== 0)));
+  const band = b.constant(m.band, 4).map((s) => (s === ONE ? known : s));
+  return b.build(m.name, [...weight, ...band]);
+}
+
+export function methodologyModel(m: Methodology, index: number, eligible: number) {
+  const c = m.coins[index];
+  return { weight: c && eligible ? c.weight : 0, band: c ? m.band : 0 };
+}
