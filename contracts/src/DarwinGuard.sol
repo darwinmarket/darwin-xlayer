@@ -26,7 +26,7 @@ contract DarwinGuard {
     uint256 public immutable breakerCircuit;
 
     /// Circuit shapes (circuits/src/darwin.ts).
-    uint32 internal constant POLICY_IN = 13;
+    uint32 internal constant POLICY_IN = 14;
     uint32 internal constant POLICY_OUT = 3;
     uint32 internal constant BREAKER_IN = 5;
     uint32 internal constant BREAKER_OUT = 4;
@@ -137,16 +137,18 @@ contract DarwinGuard {
         bool isBuy;
         uint8 drift; // |weight after - target| in pp, saturating at 15
         bool better; // the trade does not move the coin further from its target
+        bool open; // the coin's market is in session
     }
 
     function policyInputs(Leg memory l) public pure returns (uint256 v) {
         v = uint256(l.dev > 15 ? 15 : l.dev) | (uint256(l.age > 3 ? 3 : l.age) << 4)
             | (uint256(l.seqUp ? 1 : 0) << 6) | (uint256(l.isBuy ? 1 : 0) << 7)
-            | (uint256(l.drift > 15 ? 15 : l.drift) << 8) | (uint256(l.better ? 1 : 0) << 12);
+            | (uint256(l.drift > 15 ? 15 : l.drift) << 8) | (uint256(l.better ? 1 : 0) << 12)
+            | (uint256(l.open ? 1 : 0) << 13);
     }
 
     /// The circuit's verdict on one leg: allowed, and a severity (0 clean, 1 warned, 2 refused,
-    /// 3 refused because the market itself is broken).
+    /// 3 refused because the market itself is broken). A stock outside its session is refused (2).
     function policy(Leg memory l) public view returns (bool allow, uint8 severity) {
         uint256 out = _eval(policyCircuit, _packed(policyInputs(l), POLICY_IN));
         allow = out & 1 == 1;
@@ -157,7 +159,7 @@ contract DarwinGuard {
 
     /// The five facts of the breaker for a basket, as its input bits. They describe the market as a
     /// whole; one coin's trouble only makes that coin ineligible (see `eligible`).
-    ///   0 feeds alive: the quote's feed under an hour old, every coin's within heartbeat + grace
+    ///   0 feeds alive: the quote's feed under an hour old, every coin in session within heartbeat + grace
     ///   1 the X Layer sequencer is up
     ///   2 the quote stablecoin is on its peg
     ///   3 no pool more than 10% away from its oracle (30-minute TWAP)
@@ -168,9 +170,13 @@ contract DarwinGuard {
         bool pricesOk = true;
         bool reservesOk = true;
         for (uint256 i; i < coins.length; i++) {
-            if (oracle.ageClass(coins[i]) > 2) alive = false;
-            if (twapDeviationBps(coins[i]) > MAX_BREAKER_DEV_BPS) pricesOk = false;
             if (!oracle.reserveOk(coins[i])) reservesOk = false;
+            // a closed stock market is not an incident: its feed and pool rest until it opens
+            if (!oracle.sessionOpen(coins[i])) continue;
+            if (oracle.ageClass(coins[i]) > 2) alive = false;
+            // a coin without a TWAP history is never judged on its spot: one flash loan must not trip a basket
+            (bool ok, uint256 bps) = twapDeviationBps(coins[i]);
+            if (ok && bps > MAX_BREAKER_DEV_BPS) pricesOk = false;
         }
         bits = (alive ? 1 : 0) | (oracle.sequencerUp() ? 2 : 0) | (oracle.quotePegOk() ? 4 : 0)
             | (pricesOk ? 8 : 0) | (reservesOk ? 16 : 0);
@@ -179,17 +185,33 @@ contract DarwinGuard {
     uint256 public constant MAX_BREAKER_DEV_BPS = 1000; // 10%
 
     /// |30-minute TWAP - oracle| / oracle in basis points (0 for the quote token).
-    function twapDeviationBps(address coin) public view returns (uint256) {
+    /// `ok` is false when the pool has no usable history yet (a quiet pool, or a new one).
+    function twapDeviationBps(address coin) public view returns (bool ok, uint256 bps) {
+        if (coin == oracle.quote()) return (true, 0);
+        (uint256 p,) = oracle.price(coin);
+        try oracle.twapPrice(coin) returns (uint256 tw) {
+            return (true, (tw > p ? tw - p : p - tw) * 10_000 / p);
+        } catch {
+            return (false, 0);
+        }
+    }
+
+    /// |spot - oracle| / oracle in basis points.
+    function spotDeviationBps(address coin) public view returns (uint256) {
         if (coin == oracle.quote()) return 0;
         (uint256 p,) = oracle.price(coin);
-        uint256 tw = oracle.twapPrice(coin);
-        return (tw > p ? tw - p : p - tw) * 10_000 / p;
+        uint256 sp = oracle.spotPrice(coin);
+        return (sp > p ? sp - p : p - sp) * 10_000 / p;
     }
 
     /// The coin's pool (30-minute TWAP) is within MAX_SPOT_DEV of its oracle. A TWAP, so one flash
     /// loan cannot make a coin ineligible.
+    /// Without a TWAP history the spot price stands in: the worst a flash loan can do with it is
+    /// move new money between coins, and every trade is judged on its real execution price anyway.
     function coinPriceOk(address coin) public view returns (bool) {
-        return twapDeviationBps(coin) <= uint256(MAX_SPOT_DEV) * 25;
+        (bool ok, uint256 bps) = twapDeviationBps(coin);
+        if (!ok) bps = spotDeviationBps(coin);
+        return bps <= uint256(MAX_SPOT_DEV) * 25;
     }
 
     /// What one beat would do now, without storing it.
@@ -223,9 +245,10 @@ contract DarwinGuard {
 
     // ---- 3. methodologies ------------------------------------------------------------------------
 
-    /// A coin is eligible for new money when its feed is fresh and its pool sits on its oracle.
+    /// A coin is eligible for new money when its market is in session, its feed is fresh and its
+    /// pool sits on its oracle.
     function eligible(address coin) public view returns (bool) {
-        return oracle.ageClass(coin) <= 1 && coinPriceOk(coin);
+        return oracle.sessionOpen(coin) && oracle.ageClass(coin) <= 1 && coinPriceOk(coin);
     }
 
     /// Target weight (percent) and band (pp) of coin `index` under methodology circuit `id`.
