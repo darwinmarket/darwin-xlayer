@@ -13,20 +13,24 @@ import {DarwinOracle} from "./DarwinOracle.sol";
 /// @notice One token, a whole strategy: an ERC-20 share fully backed by the coins it holds.
 ///
 /// - Only the router mints, after handing the coins in (a whole basket bought in one transaction).
+///   The very first buy also mints $1 of shares to DEAD, never redeemable (protects the share price).
 /// - Anyone redeems at any time, in kind: shares are burnt and every coin is paid out pro rata.
 ///   No breaker, circuit or admin can stop an exit.
-/// - The target weights are a TapeOut circuit (the methodology). The owner can propose a new one;
-///   it applies only after a public 3-day timelock, and its netlist hash is pinned when proposed.
+/// - The target weights are a TapeOut circuit (the methodology). The owner (the strategy's
+///   creator) can propose a new one; it applies only after a public 3-day timelock, and its
+///   netlist hash is pinned when proposed. The creator earns a share of the basket's fees.
 contract DarwinBasket is ERC20, Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     address public immutable router;
+    /// Who designed the strategy: receives the creator's share of every fee.
+    address public immutable creator;
     DarwinGuard public immutable guard;
     DarwinOracle public immutable oracle;
 
     uint256 public constant TIMELOCK = 3 days;
     uint8 public constant MAX_COINS = 8;
-    /// The seed's shares go here, where nobody can redeem them (protects the share price).
+    /// The first buy's $1 of shares go here, where nobody can redeem them.
     address public constant DEAD = 0x000000000000000000000000000000000000dEaD;
 
     address[] internal coins;
@@ -35,17 +39,12 @@ contract DarwinBasket is ERC20, Ownable2Step, ReentrancyGuard {
     uint256 public pendingId;
     bytes32 public pendingHash;
     uint256 public pendingEta;
-    bool public seeded;
-
-    event Seeded(uint256 shares, uint256 navUsd);
     event Minted(address indexed to, uint256 shares);
     event Redeemed(address indexed from, address indexed to, uint256 shares, uint256[] amounts);
     event MethodologyProposed(uint256 id, bytes32 hash, uint256 eta);
     event MethodologyApplied(uint256 id, bytes32 hash);
 
     error NotRouter();
-    error AlreadySeeded();
-    error NotSeeded();
     error BadCoins();
     error ZeroShares();
     error NoPending();
@@ -55,6 +54,7 @@ contract DarwinBasket is ERC20, Ownable2Step, ReentrancyGuard {
         string memory name_,
         string memory symbol_,
         address owner_,
+        address creator_,
         address router_,
         DarwinGuard guard_,
         address[] memory coins_,
@@ -63,6 +63,7 @@ contract DarwinBasket is ERC20, Ownable2Step, ReentrancyGuard {
     ) ERC20(name_, symbol_) Ownable(owner_) {
         if (coins_.length == 0 || coins_.length > MAX_COINS) revert BadCoins();
         router = router_;
+        creator = creator_;
         guard = guard_;
         oracle = guard_.oracle();
         for (uint256 i; i < coins_.length; i++) {
@@ -126,26 +127,11 @@ contract DarwinBasket is ERC20, Ownable2Step, ReentrancyGuard {
         bps[last] += 10_000 - assigned; // rounding dust to the last eligible coin
     }
 
-    // ---- seed, mint, redeem ----------------------------------------------------------------------
-
-    /// One-time seed by the owner: coins in, shares worth $1 each minted to DEAD, never redeemable.
-    function seed(uint256[] calldata amounts) external onlyOwner nonReentrant {
-        if (seeded) revert AlreadySeeded();
-        if (amounts.length != coins.length) revert BadCoins();
-        seeded = true;
-        for (uint256 i; i < coins.length; i++) {
-            if (amounts[i] > 0) IERC20(coins[i]).safeTransferFrom(msg.sender, address(this), amounts[i]);
-        }
-        uint256 v = nav();
-        if (v == 0) revert ZeroShares();
-        _mint(DEAD, v);
-        emit Seeded(v, v);
-    }
+    // ---- mint, redeem ----------------------------------------------------------------------
 
     /// The router mints after it has transferred the coins in.
     function mint(address to, uint256 shares) external {
         if (msg.sender != router) revert NotRouter();
-        if (!seeded) revert NotSeeded();
         if (shares == 0) revert ZeroShares();
         _mint(to, shares);
         emit Minted(to, shares);
