@@ -5,7 +5,7 @@ than 150 user wallets. This repository is its port to X Layer for the **X Layer 
 hackathon (OKX Build X series, deadline **2026-12-07 23:59 UTC**), with TapeOut circuits deciding
 what a basket is allowed to do.
 
-Status: plan. Everything below "Measured" was checked on X Layer mainnet on 2026-11-22.
+Status: circuits and contracts built, 13 circuit tests and 21 mainnet-fork tests passing. Everything below "Measured" was checked on X Layer mainnet on 2026-11-22.
 
 ## 1. The hackathon in one screen
 
@@ -28,6 +28,8 @@ Status: plan. Everything below "Measured" was checked on X Layer mainnet on 2026
   `eval(id, inputs) -> outputs` (combinational) or
   `step(id, state, inputs) -> (newState, outputs)` (with LATCH state, stored by the caller).
   Inputs and outputs are bit vectors, LSB first.
+- Creating a processor costs 0.1 **BEM** (TapeOut's token, paid to the factory as an ERC-20);
+  transistors are priced in OKB by each processor (ours: free). Checked on a mainnet fork.
 - Cost: about 22.6k gas + 2,400 gas per gate. Gas is about 0.02 gwei, so a decision costs a
   fraction of a cent. Taping out a circuit costs about 0.0013 OKB plus 0.0001 OKB per gate.
 - Circuits compute bits only: numbers must be quantised (an 8-bit comparator is about 37 NAND).
@@ -117,6 +119,10 @@ Called on every buy and every sell, once per coin, in the same transaction.
   circuit nobody can change silently.
 
 ### Circuit 2: Market-risk breaker (stateful, LATCH)
+
+The breaker watches the market as a whole; one coin's trouble only makes that coin ineligible for
+new money (the methodology gives it 0% until it recovers). Pool prices are read as 30-minute TWAPs,
+so a flash loan cannot trip a basket.
 
 Called with `step()` on every trade and by anyone through a public `poke()`.
 
