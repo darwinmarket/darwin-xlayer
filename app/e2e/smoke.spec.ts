@@ -58,7 +58,7 @@ test.describe("read only", () => {
 });
 
 test.describe("with a wallet", () => {
-  test("buy a crypto basket, then verify every leg on the proof page", async ({ page }) => {
+  test("buy a crypto basket, verify every leg on the proof page, sell, redeem in kind", async ({ page }) => {
     const seed = `darwin-e2e-buy-${Date.now()}`;
     const acct = testAccount(seed);
     await fund(acct.address, USDG, 1_000n * 10n ** 6n);
@@ -81,6 +81,23 @@ test.describe("with a wallet", () => {
 
     await page.goto("/portfolio");
     await expect(page.getByTestId("positions")).toContainText("Blue Chip");
+
+    // sell half of it back to USDG
+    await page.getByTestId("positions").getByRole("link").first().click();
+    await page.getByRole("button", { name: "Sell", exact: true }).click();
+    await page.getByTestId("amount").fill("40");
+    await page.getByTestId("approve").click();
+    await expect(page.getByText(/Simulated on chain/)).toBeVisible();
+    await page.getByTestId("submit").click();
+    await expect(page.getByTestId("trade-done")).toContainText("Sold", { timeout: 90_000 });
+    await page.getByTestId("proof-link").click();
+    await expect(page.getByTestId("proof-summary")).toContainText(/All \d+ legs verified/);
+
+    // and redeem the rest in kind
+    await page.goBack();
+    await page.getByRole("button", { name: "Sell", exact: true }).click();
+    await page.getByTestId("redeem").click();
+    await expect(page.getByTestId("trade-done")).toContainText("Redeemed in kind", { timeout: 90_000 });
   });
 
   test("launch a strategy from the studio", async ({ page }) => {
