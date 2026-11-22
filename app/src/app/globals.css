@@ -85,7 +85,7 @@ h1, h2, h3, h4, p { margin: 0; }
 .xsmall { font-size: 12px; }
 
 /* ---- layout atoms ---------------------------------------------------------------------------- */
-.page { padding: 36px 0 80px; }
+.page { padding-top: 36px; padding-bottom: 80px; }
 .page-head { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; justify-content: space-between; margin-bottom: 28px; }
 .page-head .lead { margin-top: 10px; }
 .stack-s > * + * { margin-top: 8px; }

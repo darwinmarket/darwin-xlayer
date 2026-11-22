@@ -6,7 +6,7 @@
 }
 .inner { display: flex; align-items: center; gap: 24px; height: 64px; }
 .brand { display: flex; align-items: baseline; gap: 8px; color: var(--ink); flex: none; }
-.logo { height: 20px; width: auto; display: block; align-self: center; }
+.logo { height: 22px; width: auto; display: block; align-self: center; }
 .chain { font-family: var(--font-mono-stack); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold-ink); }
 .nav { display: flex; gap: 4px; }
 .nav a { padding: 8px 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: var(--ink-3); transition: color 0.15s, background 0.15s; }
