@@ -1,0 +1,31 @@
+.header {
+  position: sticky; top: 0; z-index: 50;
+  background: color-mix(in srgb, var(--paper) 86%, transparent);
+  backdrop-filter: saturate(140%) blur(10px);
+  border-bottom: 1px solid var(--rule);
+}
+.inner { display: flex; align-items: center; gap: 24px; height: 64px; }
+.brand { display: flex; align-items: baseline; gap: 8px; color: var(--ink); flex: none; }
+.logo { height: 20px; width: auto; display: block; align-self: center; }
+.chain { font-family: var(--font-mono-stack); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold-ink); }
+.nav { display: flex; gap: 4px; }
+.nav a { padding: 8px 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: var(--ink-3); transition: color 0.15s, background 0.15s; }
+.nav a:hover { color: var(--ink); background: var(--paper-2); }
+.nav a.active { color: var(--ink); background: var(--paper-2); }
+.right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.net { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--warn); background: var(--warn-soft); padding: 4px 10px; border-radius: 999px; }
+.burger { display: none; width: 36px; height: 36px; border-radius: 8px; border: 1px solid var(--rule); flex-direction: column; align-items: center; justify-content: center; gap: 5px; }
+.burger span { width: 16px; height: 1.5px; background: var(--ink); display: block; }
+@media (max-width: 860px) {
+  .burger { display: inline-flex; }
+  .nav { display: none; position: absolute; top: 64px; left: 0; right: 0; flex-direction: column; background: var(--paper); border-bottom: 1px solid var(--rule); padding: 8px var(--gutter) 14px; }
+  .navOpen { display: flex; }
+  .net { display: none; }
+}
+
+.footer { border-top: 1px solid var(--rule); padding: 32px 0 40px; margin-top: 40px; background: var(--paper); }
+.footInner { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 24px; }
+.addrs { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px 24px; margin: 0; min-width: min(100%, 540px); }
+.addrs dt { font-size: 11px; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.08em; }
+.addrs dd { margin: 2px 0 0; font-size: 13px; }
+.addrs a:hover { color: var(--gold-ink); }
