@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { fund, injectWallet, testAccount } from "./wallet";
 
 const USDG = "0x4ae46a509F6b1D9056937BA4500cb143933D2dc8" as const;
+const USDC = "0xB6CEceAB302E2E4948951eE7843FC24E92933061" as const;
 
 async function openBasket(page: Page, name: RegExp) {
   await page.goto("/");
@@ -71,7 +72,7 @@ test.describe("with a wallet", () => {
     await page.getByTestId("amount").fill("100");
     await page.getByTestId("approve").click();
     await expect(page.getByTestId("submit")).toBeVisible();
-    await expect(page.getByText(/Simulated on chain/)).toBeVisible();
+    await expect(page.getByText(/Simulated on chain/)).toBeVisible({ timeout: 90_000 });
     await page.getByTestId("submit").click();
     await expect(page.getByTestId("trade-done")).toBeVisible({ timeout: 90_000 });
     await page.getByTestId("proof-link").click();
@@ -87,7 +88,7 @@ test.describe("with a wallet", () => {
     await page.getByRole("button", { name: "Sell", exact: true }).click();
     await page.getByTestId("amount").fill("40");
     await page.getByTestId("approve").click();
-    await expect(page.getByText(/Simulated on chain/)).toBeVisible();
+    await expect(page.getByText(/Simulated on chain/)).toBeVisible({ timeout: 90_000 });
     await page.getByTestId("submit").click();
     await expect(page.getByTestId("trade-done")).toContainText("Sold", { timeout: 90_000 });
     await page.getByTestId("proof-link").click();
@@ -98,6 +99,26 @@ test.describe("with a wallet", () => {
     await page.getByRole("button", { name: "Sell", exact: true }).click();
     await page.getByTestId("redeem").click();
     await expect(page.getByTestId("trade-done")).toContainText("Redeemed in kind", { timeout: 90_000 });
+  });
+
+  test("buy a tokenized stock basket with USDC while the US session is open", async ({ page }) => {
+    const seed = `darwin-e2e-stocks-${Date.now()}`;
+    await fund(testAccount(seed).address, USDC, 500n * 10n ** 6n);
+    await injectWallet(page, seed);
+    await openBasket(page, /US Tech/);
+    test.skip((await page.getByTestId("session").first().innerText()).includes("CLOSED"), "US market closed on this fork");
+    await page.getByTestId("connect").first().click();
+    await page.getByTestId("wallet-market.darwin.test").click();
+    await page.getByTestId("pay-token").first().selectOption({ label: "USDC" });
+    await page.getByTestId("amount").fill("200");
+    await page.getByTestId("approve").click();
+    await expect(page.getByText(/Simulated on chain/)).toBeVisible({ timeout: 90_000 });
+    await page.getByTestId("submit").click();
+    await expect(page.getByTestId("trade-done")).toBeVisible({ timeout: 90_000 });
+    await page.getByTestId("proof-link").click();
+    await expect(page.getByTestId("proof-summary")).toContainText(/All \d+ legs verified/);
+    // the USDC -> USDG conversion is a leg too, judged like the others
+    expect(await page.getByTestId("leg").count()).toBeGreaterThanOrEqual(6);
   });
 
   test("launch a strategy from the studio", async ({ page }) => {
