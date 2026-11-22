@@ -5,7 +5,7 @@ than 150 user wallets. This repository is its port to X Layer for the **X Layer 
 hackathon (OKX Build X series, deadline **2026-12-07 23:59 UTC**), with TapeOut circuits deciding
 what a basket is allowed to do.
 
-Status: circuits and contracts built, 13 circuit tests and 21 mainnet-fork tests passing. Everything below "Measured" was checked on X Layer mainnet on 2026-11-22.
+Status (2026-11-23): circuits, contracts, studio and deploy scripts built; 13 circuit tests, 59 mainnet-fork tests and 3 invariants passing in CI; web app in progress.
 
 ## 1. The hackathon in one screen
 
@@ -95,9 +95,15 @@ operator entirely.
 | Balanced | 35% xBTC, 35% xETH, 30% USDG | Lower volatility |
 | OKX Ecosystem | 50% OKB, 25% xBTC, 25% xETH | X Layer's own token |
 
-Stretch, if time allows: a **tokenized stocks** basket (wNVDAx, wSPYx, wQQQx...). X Layer has
-Chainlink feeds and $1M to $3M Uniswap pools for these, and Darwin already built stock baskets on
-Monad.
+**Tokenized stocks are the headline** (user decision, 2026-11-22). Nine xStocks have both a
+Chainlink feed and a usable Uniswap pool on X Layer: NVIDIA, S&P 500, Nasdaq 100, Tesla, SpaceX,
+Apple, Alphabet, Circle, MicroStrategy. Five stock baskets: US Tech, US Core, Frontier, Crypto
+Equities, All Weather. Their feeds follow the US equities 24/5 session, so the policy circuit has a
+session input: a closed stock is refused as closed, not as broken, and the breaker ignores it.
+
+**Anyone can design a strategy** (user decision, 2026-11-22): the studio tapes out a methodology
+circuit built in the browser, verifies it on chain and deploys the basket; the creator earns a third
+of the fees.
 
 ## 5. TapeOut, load-bearing
 
