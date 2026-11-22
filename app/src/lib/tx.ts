@@ -54,7 +54,12 @@ export async function send(wallet: WalletClient, w: WriteArgs, onHash?: (h: Hash
     abi: withErrors(w.abi),
     account,
   } as never);
-  const hash = await wallet.writeContract(request as never);
+  // Darwin's calls hold try/catch around oracle reads and give each circuit call a fixed gas
+  // budget: a binary-searched estimate can land where an inner call silently runs short, so
+  // send with a wide margin (X Layer gas is a fraction of a cent).
+  const estimate = await publicClient.estimateContractGas({ ...w, abi: withErrors(w.abi), account } as never);
+  const gas = (estimate * 3n) / 2n + 300_000n;
+  const hash = await wallet.writeContract({ ...(request as object), gas } as never);
   onHash?.(hash);
   const receipt = await publicClient.waitForTransactionReceipt({ hash, pollingInterval: 1_000 });
   if (receipt.status !== "success") throw new Error(`Transaction reverted (${hash})`);

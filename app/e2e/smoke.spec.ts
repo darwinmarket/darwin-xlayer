@@ -59,9 +59,10 @@ test.describe("read only", () => {
 
 test.describe("with a wallet", () => {
   test("buy a crypto basket, then verify every leg on the proof page", async ({ page }) => {
-    const acct = testAccount("darwin-e2e-buy");
+    const seed = `darwin-e2e-buy-${Date.now()}`;
+    const acct = testAccount(seed);
     await fund(acct.address, USDG, 1_000n * 10n ** 6n);
-    await injectWallet(page, "darwin-e2e-buy");
+    await injectWallet(page, seed);
     await openBasket(page, /Blue Chip/);
     await page.getByTestId("connect").first().click();
     await page.getByTestId("wallet-market.darwin.test").click();
@@ -83,9 +84,9 @@ test.describe("with a wallet", () => {
   });
 
   test("launch a strategy from the studio", async ({ page }) => {
-    const acct = testAccount("darwin-e2e-studio");
-    await fund(acct.address);
-    await injectWallet(page, "darwin-e2e-studio");
+    const seed = `darwin-e2e-studio-${Date.now()}`;
+    await fund(testAccount(seed).address);
+    await injectWallet(page, seed);
     await page.goto("/studio");
     await page.getByTestId("connect").first().click();
     await page.getByTestId("wallet-market.darwin.test").click();

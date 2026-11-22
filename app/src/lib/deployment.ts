@@ -3,7 +3,8 @@ import { DEPLOYMENTS } from "@/config/deployments";
 
 /** Which deployment the app reads: NEXT_PUBLIC_DEPLOYMENT=local (anvil fork) or xlayer (mainnet). */
 export const DEPLOYMENT_NAME = (process.env.NEXT_PUBLIC_DEPLOYMENT || "local") as "local" | "xlayer" | string;
-export const IS_LOCAL = DEPLOYMENT_NAME === "local";
+/** Anything but mainnet is a local fork (local, or a developer's own). */
+export const IS_LOCAL = DEPLOYMENT_NAME !== "xlayer";
 
 const file = DEPLOYMENTS[DEPLOYMENT_NAME];
 
