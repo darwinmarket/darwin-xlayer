@@ -85,7 +85,7 @@ test("every latch must be connected", () => {
 });
 
 // ---- 1. trade policy: all 8,192 inputs -----------------------------------------------------------
-test("trade policy matches its reference model on all 8,192 inputs", () => {
+test("trade policy matches its reference model on all 16,384 inputs", () => {
   const c = tradePolicy();
   for (let x = 0; x < 1 << POLICY_IN.n; x++) {
     const bits = toBits(x, POLICY_IN.n);
@@ -96,6 +96,7 @@ test("trade policy matches its reference model on all 8,192 inputs", () => {
       isBuy: bits[POLICY_IN.isBuy],
       drift: fromBits(bits.slice(POLICY_IN.drift, POLICY_IN.drift + 4)),
       better: bits[POLICY_IN.better],
+      open: bits[POLICY_IN.open],
     };
     const want = tradePolicyModel(i);
     const o = c.eval(bits);
@@ -106,8 +107,8 @@ test("trade policy matches its reference model on all 8,192 inputs", () => {
 test("trade policy: named cases", () => {
   const c = tradePolicy();
   const run = (i: Partial<Parameters<typeof tradePolicyModel>[0]>) => {
-    const v = { dev: 0, age: 0, seqUp: 1, isBuy: 1, drift: 0, better: 0, ...i };
-    const bits = [...toBits(v.dev, 4), ...toBits(v.age, 2), v.seqUp, v.isBuy, ...toBits(v.drift, 4), v.better];
+    const v = { dev: 0, age: 0, seqUp: 1, isBuy: 1, drift: 0, better: 0, open: 1, ...i };
+    const bits = [...toBits(v.dev, 4), ...toBits(v.age, 2), v.seqUp, v.isBuy, ...toBits(v.drift, 4), v.better, v.open];
     const o = c.eval(bits);
     return { allow: o[0], severity: o[1] | (o[2] << 1) };
   };
@@ -123,6 +124,9 @@ test("trade policy: named cases", () => {
   assert.deepEqual(run({ drift: 9 }), { allow: 0, severity: 2 }, "a buy may not push a coin 9 pp off target");
   assert.deepEqual(run({ drift: 9, better: 1 }), { allow: 1, severity: 0 }, "unless it brings it closer");
   assert.deepEqual(run({ drift: 15, isBuy: 0 }), { allow: 1, severity: 0 }, "sells are never held back by drift");
+  assert.deepEqual(run({ open: 0 }), { allow: 0, severity: 2 }, "a stock on a weekend: closed, not broken");
+  assert.deepEqual(run({ open: 0, age: 3, isBuy: 0 }), { allow: 0, severity: 2 }, "its feed is old on a weekend: still just closed");
+  assert.deepEqual(run({ open: 0, seqUp: 0 }), { allow: 0, severity: 3 }, "sequencer down: broken, open or not");
 });
 
 // ---- 2. breaker: every state x every input, and long sequences ----------------------------------

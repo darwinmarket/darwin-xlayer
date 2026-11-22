@@ -13,7 +13,10 @@ import { Builder, type Circuit, type Sig, ONE } from "./netlist.ts";
  *   7      isBuy    1 for a buy leg, 0 for a sell leg
  *   8..11  drift    |weight after the trade - target| in 1 pp steps, saturating at 15
  *   12     better   the trade does not move the coin further from its target
- * Outputs (3 bits): allow, severity (2 bits: 0 clean, 1 allowed with a warning, 2 refused, 3 refused: market broken)
+ *   13     open     the coin's market is in session (always for crypto, 24/5 for US stocks)
+ * Outputs (3 bits): allow, severity (2 bits: 0 clean, 1 allowed with a warning, 2 refused,
+ * 3 refused: market broken). A closed stock market is a refusal (2), not a broken one: its feed
+ * is expected to be old on a weekend.
  */
 export const POLICY = {
   maxDevBuy: 8, // 2.00%
@@ -21,7 +24,7 @@ export const POLICY = {
   cleanDev: 4, // 1.00%
   band: 5, // 5 pp
 };
-export const POLICY_IN = { dev: 0, age: 4, seqUp: 6, isBuy: 7, drift: 8, better: 12, n: 13 };
+export const POLICY_IN = { dev: 0, age: 4, seqUp: 6, isBuy: 7, drift: 8, better: 12, open: 13, n: 14 };
 
 export function tradePolicy(): Circuit {
   const b = new Builder(POLICY_IN.n);
@@ -31,16 +34,18 @@ export function tradePolicy(): Circuit {
   const isBuy = b.input(POLICY_IN.isBuy);
   const drift = b.inputs(POLICY_IN.drift, 4);
   const better = b.input(POLICY_IN.better);
+  const open = b.input(POLICY_IN.open);
 
   const ageLe1 = b.leConst(age, 1);
   const ageLe2 = b.leConst(age, 2);
   const ageOk = b.mux(isBuy, ageLe1, ageLe2);
   const devOk = b.mux(isBuy, b.leConst(dev, POLICY.maxDevBuy), b.leConst(dev, POLICY.maxDevSell));
   const driftOk = b.or(b.not(isBuy), b.or(b.leConst(drift, POLICY.band), better));
-  const allow = b.andAll([seqUp, ageOk, devOk, driftOk]);
+  const allow = b.andAll([seqUp, open, ageOk, devOk, driftOk]);
 
   const clean = b.andAll([allow, b.leConst(dev, POLICY.cleanDev), ageLe1]);
-  const hard = b.or(b.not(seqUp), b.not(ageLe2)); // the market itself is broken
+  // the market itself is broken: no sequencer, or a feed dead while its market is open
+  const hard = b.or(b.not(seqUp), b.and(open, b.not(ageLe2)));
   // severity: clean 0, warned 1 (allow & !clean), refused 2 (!allow & !hard), broken 3 (hard)
   const sev0 = b.or(b.and(allow, b.not(clean)), hard);
   const sev1 = b.not(allow);
@@ -48,12 +53,12 @@ export function tradePolicy(): Circuit {
 }
 
 /** The reference model the circuit must match on every one of its 8,192 inputs. */
-export function tradePolicyModel(i: { dev: number; age: number; seqUp: number; isBuy: number; drift: number; better: number }) {
+export function tradePolicyModel(i: { dev: number; age: number; seqUp: number; isBuy: number; drift: number; better: number; open: number }) {
   const ageOk = i.isBuy ? i.age <= 1 : i.age <= 2;
   const devOk = i.dev <= (i.isBuy ? POLICY.maxDevBuy : POLICY.maxDevSell);
   const driftOk = !i.isBuy || i.drift <= POLICY.band || i.better === 1;
-  const allow = i.seqUp === 1 && ageOk && devOk && driftOk;
-  const hard = i.seqUp === 0 || i.age === 3;
+  const allow = i.seqUp === 1 && i.open === 1 && ageOk && devOk && driftOk;
+  const hard = i.seqUp === 0 || (i.open === 1 && i.age === 3);
   const clean = allow && i.dev <= POLICY.cleanDev && i.age <= 1;
   const severity = hard ? 3 : !allow ? 2 : clean ? 0 : 1;
   return { allow: allow ? 1 : 0, severity };
@@ -106,6 +111,55 @@ export function breakerModel(state: { tripped: number; counter: number }, health
 export type Methodology = { name: string; coins: { symbol: string; weight: number }[]; band: number };
 
 export const METHODOLOGIES: Methodology[] = [
+  // ---- tokenized US stocks (xStocks), trading 24/5 ----
+  {
+    name: "darwin-us-tech",
+    coins: [
+      { symbol: "wNVDAx", weight: 30 },
+      { symbol: "wQQQx", weight: 25 },
+      { symbol: "wAAPLx", weight: 15 },
+      { symbol: "wGOOGLx", weight: 15 },
+      { symbol: "wTSLAx", weight: 15 },
+    ],
+    band: 5,
+  },
+  {
+    name: "darwin-us-core",
+    coins: [
+      { symbol: "wSPYx", weight: 60 },
+      { symbol: "wQQQx", weight: 40 },
+    ],
+    band: 5,
+  },
+  {
+    name: "darwin-frontier",
+    coins: [
+      { symbol: "wSPCXx", weight: 40 },
+      { symbol: "wTSLAx", weight: 30 },
+      { symbol: "wNVDAx", weight: 30 },
+    ],
+    band: 5,
+  },
+  {
+    name: "darwin-crypto-equities",
+    coins: [
+      { symbol: "wCRCLx", weight: 35 },
+      { symbol: "wMSTRx", weight: 35 },
+      { symbol: "xBTC", weight: 30 },
+    ],
+    band: 5,
+  },
+  {
+    name: "darwin-all-weather",
+    coins: [
+      { symbol: "wSPYx", weight: 40 },
+      { symbol: "xBTC", weight: 25 },
+      { symbol: "xETH", weight: 15 },
+      { symbol: "USDG", weight: 20 },
+    ],
+    band: 5,
+  },
+  // ---- crypto, 24/7 ----
   {
     name: "darwin-bluechip",
     coins: [
