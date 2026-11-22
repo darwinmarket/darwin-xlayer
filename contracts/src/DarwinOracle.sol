@@ -212,18 +212,31 @@ contract DarwinOracle {
         return _toUsd(m, Math.mulDiv(sqrtP, sqrtP, 1 << 64));
     }
 
-    /// USD price of one whole token from its pool's 30-minute time-weighted average (18 decimals).
-    /// Moving it costs holding the pool off price for half an hour, not one flash loan.
+    /// USD price of one whole token from its pool's time-weighted average (18 decimals): over 30
+    /// minutes, or over the longest of 10, 5 or 1 minute that the pool's observation history covers
+    /// (a busy pool with a short history). Moving it means holding the pool off price for that long,
+    /// across many blocks, not one flash loan. Returns the window used.
     function twapPrice(address token) public view returns (uint256) {
+        (uint256 p,) = twap(token);
+        return p;
+    }
+
+    function twap(address token) public view returns (uint256 usd, uint32 window) {
         Market memory m = market(token);
-        if (token == quote) return _usd(quote);
-        uint32[] memory ago = new uint32[](2);
-        ago[0] = TWAP_WINDOW;
-        (int56[] memory cum,) = m.pool.observe(ago);
-        int56 delta = cum[1] - cum[0];
-        int24 tick = int24(delta / int56(uint56(TWAP_WINDOW)));
-        if (delta < 0 && delta % int56(uint56(TWAP_WINDOW)) != 0) tick--; // round towards -infinity
-        return _toUsd(m, priceX128AtTick(tick));
+        if (token == quote) return (_usd(quote), 0);
+        uint32[4] memory windows = [TWAP_WINDOW, 10 minutes, 5 minutes, 1 minutes];
+        for (uint256 i; i < windows.length; i++) {
+            uint32[] memory ago = new uint32[](2);
+            ago[0] = windows[i];
+            try m.pool.observe(ago) returns (int56[] memory cum, uint160[] memory) {
+                int56 delta = cum[1] - cum[0];
+                int56 w = int56(uint56(windows[i]));
+                int24 tick = int24(delta / w);
+                if (delta < 0 && delta % w != 0) tick--; // round towards -infinity
+                return (_toUsd(m, priceX128AtTick(tick)), windows[i]);
+            } catch {}
+        }
+        revert BadPrice(token);
     }
 
     function _usd(address token) internal view returns (uint256 usd) {
