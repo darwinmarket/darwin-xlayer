@@ -105,7 +105,7 @@ export function decodeTrade(receipt: TransactionReceipt) {
   return { legs, bought, sold };
 }
 
-export type TradeRow = { hash: Hash; block: bigint; kind: "buy" | "sell"; who: Address; payToken: Address; amount: bigint; shares: bigint };
+export type TradeRow = { hash: Hash; block: bigint; basket: Address; kind: "buy" | "sell"; who: Address; payToken: Address; amount: bigint; shares: bigint };
 
 /** Recent buys and sells of a basket (or of everything, or of one account), newest first. */
 export async function recentTrades(opts: { basket?: Address; account?: Address; span?: bigint } = {}): Promise<TradeRow[]> {
@@ -124,6 +124,7 @@ export async function recentTrades(opts: { basket?: Address; account?: Address; 
     rows.push({
       hash: l.transactionHash,
       block: l.blockNumber,
+      basket: a.basket as Address,
       kind: l.eventName === "Bought" ? "buy" : "sell",
       who,
       payToken: a.payToken as Address,
