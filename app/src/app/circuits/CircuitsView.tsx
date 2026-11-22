@@ -397,8 +397,9 @@ function BreakerRow({ b, breaker }: { b: BasketInfo; breaker: OnchainCircuit }) 
       <td>
         <div className="stack-s">
           <BreakerBadge b={b} />
-          <span className="xsmall muted mono" title="state bits: counter c2 c1 c0, tripped">
-            state <Bits value={b.breaker.state} n={4} /> {agree === null ? "" : agree ? "· step ✓" : "· step ✕"}
+          <span className="xsmall muted mono nowrap" title="state bits c2 c1 c0 tripped; the same beat replayed in this browser and with processor.step()">
+            state {b.breaker.state.toString(2).padStart(4, "0")}
+            {agree === null ? "" : agree ? " · step() agrees" : " · step() differs"}
           </span>
         </div>
       </td>

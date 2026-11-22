@@ -46,7 +46,7 @@ function Inner() {
   const [band, setBand] = useState(5);
   const [name, setName] = useState("");
   const [symbol, setSymbol] = useState("");
-  const [row, setRow] = useState(0);
+  const [row, setRow] = useState(8); // index 0, eligible: the first coin's weight lights up
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [launched, setLaunched] = useState<{ basket: Address; circuitId: bigint; hash: Hash } | null>(null);
