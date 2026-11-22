@@ -68,11 +68,13 @@ contract Deploy is Script {
         DarwinStudio studio = new DarwinStudio(guard, address(router));
         IERC1155(processor.transistors()).safeTransferFrom(deployer, address(studio), 0, 10_000, "");
 
-        // longer price histories on the pools whose TWAP window is short
+        // longer price histories on the pools whose TWAP window is short (skipped on a local fork,
+        // where every new observation slot is fetched from the remote node)
+        uint16 card = uint16(vm.envOr("CARDINALITY", uint256(1800)));
         address[6] memory pools =
             [XLayer.POOL_XBTC, XLayer.POOL_XETH, XLayer.POOL_WAAPLX, XLayer.POOL_WGOOGLX, XLayer.POOL_WCRCLX, XLayer.POOL_WMSTRX];
-        for (uint256 i; i < pools.length; i++) {
-            IObservations(pools[i]).increaseObservationCardinalityNext(1800);
+        for (uint256 i; card > 0 && i < pools.length; i++) {
+            IObservations(pools[i]).increaseObservationCardinalityNext(card);
         }
 
         Strategy[] memory s = _strategies();
