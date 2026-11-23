@@ -55,7 +55,8 @@ export async function loadMarkets(): Promise<Markets> {
       const m: Market = {
         address: t,
         symbol: sym,
-        decimals: decimals.status === "success" ? Number(decimals.result) : 18,
+        // never guess decimals (a wrong guess turns into a 10^12x approval): -1 marks it unusable
+        decimals: decimals.status === "success" ? Number(decimals.result) : -1,
         session,
         meta: assetMeta(sym, session),
         price: p,
@@ -106,6 +107,10 @@ export type BasketInfo = {
   methodologyId: bigint;
   methodologyHash: `0x${string}`;
   pendingEta: number;
+  /** Launched by Darwin's studio (studio.isBasket). A page for any other address must not trade. */
+  genuine: boolean;
+  /** Launched by Darwin itself rather than by a community creator. */
+  official: boolean;
   holdings: Holding[];
   kind: "stocks" | "crypto" | "mixed";
   breaker: { state: number; tripped: boolean; counter: number; lastBeat: number };
@@ -143,6 +148,7 @@ export async function loadBasket(address: Address, markets: Markets): Promise<Ba
       { ...g, functionName: "breakers", args: [address] },
       { ...g, functionName: "preview", args: [address] },
       { ...g, functionName: "buyOpen", args: [address] },
+      { address: d.studio, abi: darwinStudioAbi, functionName: "isBasket", args: [address] },
     ],
   });
   const ok = <T,>(x: { status: string; result?: unknown }, fallback: T): T => (x.status === "success" ? (x.result as T) : fallback);
@@ -197,6 +203,10 @@ export async function loadBasket(address: Address, markets: Markets): Promise<Ba
     breaker: { state: Number(state), tripped: (Number(state) & 1) === 1, counter: (Number(state) >> 1) & 7, lastBeat: Number(lastBeat) },
     preview: pv ? { next: Number(pv[0]), tripped: pv[1], facts: Number(pv[2]) } : null,
     buyOpen: ok(r[14], false),
+    // launched by Darwin's studio: anything else at this address is not a Darwin basket
+    genuine: ok(r[15], false),
+    // official = launched by the deployment's treasury (Darwin); anyone else's is a community strategy
+    official: Boolean(d.treasury) && ok<string>(r[7], "").toLowerCase() === (d.treasury ?? "").toLowerCase(),
     hasStocks: holdings.some((h) => h.meta.kind === "stock"),
   };
 }

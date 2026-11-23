@@ -35,7 +35,7 @@ export function TradePanel({ b, markets, onTraded }: { b: BasketInfo; markets: M
   const router = DEPLOYMENT!.router;
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const payTokens = useMemo(
-    () => markets.list.filter((m) => m.meta.kind === "stable" && PAY_SYMBOLS.includes(m.symbol)),
+    () => markets.list.filter((m) => m.meta.kind === "stable" && PAY_SYMBOLS.includes(m.symbol) && m.decimals > 0),
     [markets.list],
   );
   const [payAddr, setPayAddr] = useState<Address | null>(null);
