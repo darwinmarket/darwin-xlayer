@@ -16,7 +16,8 @@ What Darwin on X Layer protects, against whom, and what it does not cover.
 | Treasury | receive fees | anything else |
 | Router | mint shares after handing the coins in | redeem other people's shares |
 | TapeOut processor | evaluate circuits | change a circuit Darwin pinned without every call failing |
-| Chainlink | price coins | price a buy outside 2% of the pool, which the circuit refuses |
+| Chainlink | price coins (stocks: in session) | price a buy outside 2% of the pool, which the circuit refuses |
+| xStocks pools | price a stock while its feed rests (1-hour TWAP) | move it more than 10% from the last Chainlink price, or price it while being pushed (spot more than 1% off the TWAP) |
 | Anyone | buy, sell, redeem in kind, beat a breaker, launch a strategy | reopen a tripped breaker faster than 8 healthy beats over 1 h 45 min |
 
 There is no admin key over funds, no pause on exits, no upgradeable Darwin contract.
@@ -36,7 +37,9 @@ There is no admin key over funds, no pause on exits, no upgradeable Darwin contr
 | Sequencer outage on X Layer | Chainlink's uptime feed: no buy while down or within an hour of a restart | `test_sequencerDownClosesBuying` |
 | A wrapped asset loses its backing | xBTC/BTC exchange rate below 0.995 trips the breaker | `DarwinGuard.facts` |
 | A dead feed traps holders | redeeming in kind needs no oracle, no circuit, no router | `test_staleFeedTripsTheBreakerButExitsStayOpen` |
-| US stock market closed | a basket holding a stock outside its session takes no buy (its value would use Friday's price and a buyer could take Monday's gap) and its stock legs cannot be sold; redeeming in kind stays open; no breaker trip | `WeekendTest`, `test_noBuyWhileAHeldStockIsClosed` |
+| US stock market closed | stocks are priced by their own pool's 1-hour TWAP (the pools trade all weekend); a stock without a trustworthy pool price takes no money and a basket holding it takes no buy (no one takes the reopening gap from holders); redeeming in kind stays open; no breaker trip | `WeekendTest`, `test_noBuyWhileAHeldStockIsClosed` |
+| Push a stock pool on a weekend to misprice a basket | the price is a 1-hour TWAP; a spot more than 1% off it removes the price; it may not leave 10% of the last Chainlink price; the pool must have moved within 6 h; the circuit holds pool-priced legs to 1.5%/2% | `test_aPushedPoolLosesItsPrice`, `test_aPoolHeldFarOffForAnHourHasNoPrice`, `test_aQuietPoolHasNoPrice` |
+| Equity feeds wake up late on Monday | between 01:00 and the first answer, stocks are priced by their pools and no breaker trips | `test_mondaysFirstHour` |
 | A contract posing as a basket | the router only trades baskets launched by its studio | `test_fakeBasketIsRefused` |
 | Chainlink's daily feeds land seconds late | 24 h heartbeats get 15 minutes of margin, so nobody can trip every breaker in those seconds | `test_lateDailyFeedDoesNotTripTheBreaker` |
 | Dust legs that cannot be priced | allocations under 1 cent go to the largest leg | `test_dustLegsGoToTheLargestLeg` |
@@ -51,6 +54,11 @@ and every methodology evaluated on the real TapeOut processor and against the TA
 mismatches) and the app (transactions, RPC limits, phishing). No critical issue; every medium and
 low finding is fixed and has a regression test in `contracts/test/Regression.t.sol`.
 
+The same day, weekend pricing was added (stocks priced by their pools while their feeds rest). It
+also fixed a breaker trip in Monday's first hour, when the session is open but some equity feeds
+have not answered yet. The new policy circuit was swept again on the real TapeOut processor (all
+32,768 inputs, 0 mismatches).
+
 ## Not covered
 
 - **The tokenized stocks themselves.** xStocks are issued by a third party and are only as good as
@@ -60,7 +68,11 @@ low finding is fixed and has a regression test in `contracts/test/Regression.t.s
   reference, and checked on chain, but the processor itself is third-party, upgradeable and
   unaudited. Darwin fails closed if it changes; it cannot defend against a bug in the pinned version.
 - **Chainlink.** A wrong answer within 2% of the pool would pass. Both would have to be wrong.
+- **A pool held off its market for an hour.** On a weekend, someone holding a stock's pool off its
+  true price for a full hour, against every arbitrageur, moves its TWAP; the price stays within 10%
+  of the last Chainlink price and within 1% of the pool's own spot. The cost of holding a ~$1M pool
+  off for an hour is expected to exceed what that buys; we did not measure arbitrage speed.
 - **Uniswap liquidity.** Large trades cost more; the policy refuses them when the cost exceeds 2%.
 - **Holidays.** The session calendar knows weekends, not exchange holidays; on a holiday the equity
-  feeds go stale and the policy refuses stock legs as stale.
+  feeds go past their heartbeat and the stocks are priced by their pools, like on a weekend.
 - **No audit.** Built during a hackathon. Do not put in what you cannot afford to lose.
