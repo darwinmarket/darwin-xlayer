@@ -42,7 +42,7 @@ test.describe("read only", () => {
     await expect(page.getByTestId("policy-verdict")).toContainText("refuse");
     await expect(page.getByTestId("policy-match")).toHaveText("Browser and chain agree.");
     await page.getByTestId("sweep").click();
-    await expect(page.getByTestId("sweep-result")).toContainText("All 16,384 match");
+    await expect(page.getByTestId("sweep-result")).toContainText("All 32,768 match");
     await expect(page.getByTestId("breakers").locator("tbody tr").first()).toBeVisible();
   });
 
@@ -118,8 +118,37 @@ test.describe("with a wallet", () => {
     await expect(page.getByTestId("trade-done")).toBeVisible({ timeout: 90_000 });
     await page.getByTestId("proof-link").click();
     await expect(page.getByTestId("proof-summary")).toContainText(/All \d+ legs verified/);
-    // the USDC -> USDG conversion is a leg too, judged like the others
-    expect(await page.getByTestId("leg").count()).toBeGreaterThanOrEqual(6);
+    // the USDC -> USDG conversion is a leg too, judged like the others; a stock whose pool lags
+    // its oracle is ineligible and gets no leg (live markets: NVIDIA moved 17% in minutes once)
+    expect(await page.getByTestId("leg").count()).toBeGreaterThanOrEqual(3);
+  });
+
+  test("on a weekend, a stock basket trades at its pools' prices, and the proof shows it", async ({ page }) => {
+    const seed = `darwin-e2e-weekend-${Date.now()}`;
+    await fund(testAccount(seed).address, USDG, 1_000n * 10n ** 6n);
+    await injectWallet(page, seed);
+    await openBasket(page, /Frontier/);
+    test.skip(!(await page.getByTestId("session").first().innerText()).includes("CLOSED"), "US market open on this fork");
+    await expect(page.getByTestId("state-pool-priced")).toContainText(/one-hour average/);
+    await page.getByTestId("connect").first().click();
+    await page.getByTestId("wallet-market.darwin.test").click();
+    await page.getByTestId("amount").fill("200");
+    await page.getByTestId("approve").click();
+    await expect(page.getByText(/Simulated on chain/)).toBeVisible({ timeout: 90_000 });
+    await page.getByTestId("submit").click();
+    await expect(page.getByTestId("trade-done")).toBeVisible({ timeout: 90_000 });
+    await page.getByTestId("proof-link").click();
+    await expect(page.getByTestId("proof-summary")).toContainText(/All \d+ legs verified/);
+    await expect(page.getByText(/priced by its own Uniswap pool/).first()).toBeVisible();
+
+    // and sold back the same weekend
+    await page.goBack();
+    await page.getByRole("button", { name: "Sell", exact: true }).click();
+    await page.getByTestId("amount").fill("50");
+    await page.getByTestId("approve").click();
+    await expect(page.getByText(/Simulated on chain/)).toBeVisible({ timeout: 90_000 });
+    await page.getByTestId("submit").click();
+    await expect(page.getByTestId("trade-done")).toContainText("Sold", { timeout: 90_000 });
   });
 
   test("launch a strategy from the studio", async ({ page }) => {
