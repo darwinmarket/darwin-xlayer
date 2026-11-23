@@ -84,8 +84,8 @@ test("every latch must be connected", () => {
   assert.throws(() => b.build("t", [b.input(0)]));
 });
 
-// ---- 1. trade policy: all 8,192 inputs -----------------------------------------------------------
-test("trade policy matches its reference model on all 16,384 inputs", () => {
+// ---- 1. trade policy: all 32,768 inputs ----------------------------------------------------------
+test("trade policy matches its reference model on all 32,768 inputs", () => {
   const c = tradePolicy();
   for (let x = 0; x < 1 << POLICY_IN.n; x++) {
     const bits = toBits(x, POLICY_IN.n);
@@ -97,6 +97,7 @@ test("trade policy matches its reference model on all 16,384 inputs", () => {
       drift: fromBits(bits.slice(POLICY_IN.drift, POLICY_IN.drift + 4)),
       better: bits[POLICY_IN.better],
       open: bits[POLICY_IN.open],
+      pool: bits[POLICY_IN.pool],
     };
     const want = tradePolicyModel(i);
     const o = c.eval(bits);
@@ -107,8 +108,8 @@ test("trade policy matches its reference model on all 16,384 inputs", () => {
 test("trade policy: named cases", () => {
   const c = tradePolicy();
   const run = (i: Partial<Parameters<typeof tradePolicyModel>[0]>) => {
-    const v = { dev: 0, age: 0, seqUp: 1, isBuy: 1, drift: 0, better: 0, open: 1, ...i };
-    const bits = [...toBits(v.dev, 4), ...toBits(v.age, 2), v.seqUp, v.isBuy, ...toBits(v.drift, 4), v.better, v.open];
+    const v = { dev: 0, age: 0, seqUp: 1, isBuy: 1, drift: 0, better: 0, open: 1, pool: 0, ...i };
+    const bits = [...toBits(v.dev, 4), ...toBits(v.age, 2), v.seqUp, v.isBuy, ...toBits(v.drift, 4), v.better, v.open, v.pool];
     const o = c.eval(bits);
     return { allow: o[0], severity: o[1] | (o[2] << 1) };
   };
@@ -127,6 +128,17 @@ test("trade policy: named cases", () => {
   assert.deepEqual(run({ open: 0 }), { allow: 0, severity: 2 }, "a stock on a weekend: closed, not broken");
   assert.deepEqual(run({ open: 0, age: 3, isBuy: 0 }), { allow: 0, severity: 2 }, "its feed is old on a weekend: still just closed");
   assert.deepEqual(run({ open: 0, seqUp: 0 }), { allow: 0, severity: 3 }, "sequencer down: broken, open or not");
+  // a stock priced by its pool (weekend, holiday, Monday's first hour)
+  const weekend = { open: 0, pool: 1 };
+  assert.deepEqual(run({ ...weekend }), { allow: 1, severity: 0 }, "a weekend stock with a pool price: it trades");
+  assert.deepEqual(run({ ...weekend, dev: 6 }), { allow: 1, severity: 1 }, "1.50% from its pool price: a buy still goes");
+  assert.deepEqual(run({ ...weekend, dev: 7 }), { allow: 0, severity: 2 }, "1.75%: refused (2% on Chainlink)");
+  assert.deepEqual(run({ ...weekend, dev: 8, isBuy: 0 }), { allow: 1, severity: 1 }, "a sell up to 2%");
+  assert.deepEqual(run({ ...weekend, dev: 9, isBuy: 0 }), { allow: 0, severity: 2 }, "2.25%: refused (3% on Chainlink)");
+  assert.deepEqual(run({ ...weekend, age: 2 }), { allow: 0, severity: 2 }, "a pool quiet for hours: no buy");
+  assert.deepEqual(run({ ...weekend, age: 3, isBuy: 0 }), { allow: 0, severity: 3 }, "a dead pool price: broken");
+  assert.deepEqual(run({ ...weekend, seqUp: 0 }), { allow: 0, severity: 3 }, "sequencer down: broken");
+  assert.deepEqual(run({ open: 1, pool: 1, dev: 7 }), { allow: 0, severity: 2 }, "Monday's first hour, feed still frozen: pool limits");
 });
 
 // ---- 2. breaker: every state x every input, and long sequences ----------------------------------

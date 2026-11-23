@@ -6,7 +6,7 @@ import { Builder, type Circuit, type Sig, ONE } from "./netlist.ts";
 
 // ---- 1. Trade policy (combinational, one call per coin of a trade) ------------------------------
 /**
- * Inputs (13 bits, LSB first):
+ * Inputs (15 bits, LSB first):
  *   0..3   dev      |execution price - Chainlink price| in 0.25% steps, saturating at 15 (>= 3.75%)
  *   4..5   age      0: < 1 h, 1: < heartbeat, 2: < heartbeat + grace, 3: older
  *   6      seqUp    the X Layer sequencer is up and past its grace period
@@ -14,17 +14,22 @@ import { Builder, type Circuit, type Sig, ONE } from "./netlist.ts";
  *   8..11  drift    |weight after the trade - target| in 1 pp steps, saturating at 15
  *   12     better   the trade does not move the coin further from its target
  *   13     open     the coin's market is in session (always for crypto, 24/5 for US stocks)
+ *   14     pool     the coin is a stock priced by its own pool's 1-hour TWAP, because its Chainlink
+ *                   feed is frozen (weekend, holiday, the hour after Monday's open)
  * Outputs (3 bits): allow, severity (2 bits: 0 clean, 1 allowed with a warning, 2 refused,
- * 3 refused: market broken). A closed stock market is a refusal (2), not a broken one: its feed
- * is expected to be old on a weekend.
+ * 3 refused: market broken). A closed stock market without a pool price is a refusal (2), not a
+ * broken one: its feed is expected to be old on a weekend. A pool-priced leg trades, but held to
+ * tighter limits: its price comes from the very market it trades on.
  */
 export const POLICY = {
   maxDevBuy: 8, // 2.00%
   maxDevSell: 12, // 3.00%
+  maxDevBuyPool: 6, // 1.50%
+  maxDevSellPool: 8, // 2.00%
   cleanDev: 4, // 1.00%
   band: 5, // 5 pp
 };
-export const POLICY_IN = { dev: 0, age: 4, seqUp: 6, isBuy: 7, drift: 8, better: 12, open: 13, n: 14 };
+export const POLICY_IN = { dev: 0, age: 4, seqUp: 6, isBuy: 7, drift: 8, better: 12, open: 13, pool: 14, n: 15 };
 
 export function tradePolicy(): Circuit {
   const b = new Builder(POLICY_IN.n);
@@ -35,30 +40,38 @@ export function tradePolicy(): Circuit {
   const drift = b.inputs(POLICY_IN.drift, 4);
   const better = b.input(POLICY_IN.better);
   const open = b.input(POLICY_IN.open);
+  const pool = b.input(POLICY_IN.pool);
 
   const ageLe1 = b.leConst(age, 1);
   const ageLe2 = b.leConst(age, 2);
   const ageOk = b.mux(isBuy, ageLe1, ageLe2);
-  const devOk = b.mux(isBuy, b.leConst(dev, POLICY.maxDevBuy), b.leConst(dev, POLICY.maxDevSell));
+  const devChainlink = b.mux(isBuy, b.leConst(dev, POLICY.maxDevBuy), b.leConst(dev, POLICY.maxDevSell));
+  const devPool = b.mux(isBuy, b.leConst(dev, POLICY.maxDevBuyPool), b.leConst(dev, POLICY.maxDevSellPool));
+  const devOk = b.mux(pool, devPool, devChainlink);
   const driftOk = b.or(b.not(isBuy), b.or(b.leConst(drift, POLICY.band), better));
-  const allow = b.andAll([seqUp, open, ageOk, devOk, driftOk]);
+  const priced = b.or(open, pool);
+  const allow = b.andAll([seqUp, priced, ageOk, devOk, driftOk]);
 
   const clean = b.andAll([allow, b.leConst(dev, POLICY.cleanDev), ageLe1]);
-  // the market itself is broken: no sequencer, or a feed dead while its market is open
-  const hard = b.or(b.not(seqUp), b.and(open, b.not(ageLe2)));
+  // the market itself is broken: no sequencer, or a live market whose price is dead
+  const hard = b.or(b.not(seqUp), b.and(priced, b.not(ageLe2)));
   // severity: clean 0, warned 1 (allow & !clean), refused 2 (!allow & !hard), broken 3 (hard)
   const sev0 = b.or(b.and(allow, b.not(clean)), hard);
   const sev1 = b.not(allow);
   return b.build("darwin-trade-policy", [allow, sev0, sev1]);
 }
 
-/** The reference model the circuit must match on every one of its 8,192 inputs. */
-export function tradePolicyModel(i: { dev: number; age: number; seqUp: number; isBuy: number; drift: number; better: number; open: number }) {
+/** The reference model the circuit must match on every one of its 32,768 inputs. */
+export function tradePolicyModel(i: { dev: number; age: number; seqUp: number; isBuy: number; drift: number; better: number; open: number; pool: number }) {
   const ageOk = i.isBuy ? i.age <= 1 : i.age <= 2;
-  const devOk = i.dev <= (i.isBuy ? POLICY.maxDevBuy : POLICY.maxDevSell);
+  const maxDev = i.pool
+    ? (i.isBuy ? POLICY.maxDevBuyPool : POLICY.maxDevSellPool)
+    : (i.isBuy ? POLICY.maxDevBuy : POLICY.maxDevSell);
+  const devOk = i.dev <= maxDev;
   const driftOk = !i.isBuy || i.drift <= POLICY.band || i.better === 1;
-  const allow = i.seqUp === 1 && i.open === 1 && ageOk && devOk && driftOk;
-  const hard = i.seqUp === 0 || (i.open === 1 && i.age === 3);
+  const priced = i.open === 1 || i.pool === 1;
+  const allow = i.seqUp === 1 && priced && ageOk && devOk && driftOk;
+  const hard = i.seqUp === 0 || (priced && i.age === 3);
   const clean = allow && i.dev <= POLICY.cleanDev && i.age <= 1;
   const severity = hard ? 3 : !allow ? 2 : clean ? 0 : 1;
   return { allow: allow ? 1 : 0, severity };
