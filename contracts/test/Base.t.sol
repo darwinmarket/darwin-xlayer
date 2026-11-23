@@ -7,7 +7,7 @@ import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {DarwinOracle} from "../src/DarwinOracle.sol";
 import {DarwinGuard} from "../src/DarwinGuard.sol";
 import {DarwinBasket} from "../src/DarwinBasket.sol";
-import {DarwinRouter} from "../src/DarwinRouter.sol";
+import {DarwinRouter, IStudioRegistry} from "../src/DarwinRouter.sol";
 import {DarwinStudio} from "../src/DarwinStudio.sol";
 import {XLayer} from "../script/XLayer.sol";
 import {
@@ -97,8 +97,10 @@ abstract contract XLayerFork is Test {
             breakerId,
             circuitHash["darwin-breaker"]
         );
-        router = new DarwinRouter(guard, ISwapRouter02(XLayer.SWAP_ROUTER), treasury);
-        studio = new DarwinStudio(guard, address(router));
+        address studioAt = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
+        router = new DarwinRouter(guard, ISwapRouter02(XLayer.SWAP_ROUTER), treasury, IStudioRegistry(studioAt));
+        studio = new DarwinStudio(guard, address(router), treasury);
+        assertEq(address(studio), studioAt);
         vm.prank(owner);
         IERC1155(transistors).safeTransferFrom(owner, address(studio), 0, 10_000, "");
 
@@ -150,7 +152,7 @@ abstract contract XLayerFork is Test {
         returns (DarwinBasket b)
     {
         (bytes memory nl,,) = _netlist(method);
-        uint256 fee = studio.launchFee();
+        uint256 fee = studio.launchFee(nl.length / 7);
         vm.prank(owner);
         b = studio.createStrategy{value: fee}(name, sym, coins, nl);
         circuitId[method] = studio.circuitOf(address(b));

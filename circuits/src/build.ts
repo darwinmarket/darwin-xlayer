@@ -19,6 +19,16 @@ const fixtures = [
     const w = [0, 1, 2, 3, 4, 5, 6].map((bit) => b.orAll([((60 >> bit) & 1) ? s0 : 0, ((30 >> bit) & 1) ? s1 : 0].filter((x) => x !== 0)));
     return b.build("fixture-bad-sum", [...w, ...b.constant(5, 4)]);
   })(),
+  (() => {
+    // 50/50 that ignores the eligibility bit: keeps giving weight to a stale or closed coin
+    const b = new Builder(4);
+    const idx = b.inputs(0, 3);
+    const s0 = b.eqConst(idx, 0);
+    const s1 = b.eqConst(idx, 1);
+    const w = [0, 1, 2, 3, 4, 5, 6].map((bit) => (((50 >> bit) & 1) ? b.or(s0, s1) : 0));
+    const known = b.or(s0, s1);
+    return b.build("fixture-ignores-eligibility", [...w, known, 0, known, 0]);
+  })(),
   // a valid three-coin methodology used with two coins: index 2 gets weight it should not
   methodology({ name: "fixture-extra-index", coins: [{ symbol: "A", weight: 40 }, { symbol: "B", weight: 40 }, { symbol: "C", weight: 20 }], band: 5 }),
 ];

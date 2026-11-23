@@ -6,6 +6,7 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {XLayerFork} from "./Base.t.sol";
 import {DarwinBasket} from "../src/DarwinBasket.sol";
 import {DarwinStudio} from "../src/DarwinStudio.sol";
+import {DarwinGuard} from "../src/DarwinGuard.sol";
 
 /// Anyone designs a strategy, tapes it out and launches it as a basket.
 contract StudioTest is XLayerFork {
@@ -19,7 +20,7 @@ contract StudioTest is XLayerFork {
     function _create(address who, string memory fixture, address[] memory coins) internal returns (DarwinBasket b) {
         (bytes memory nl,,) = _netlist(fixture);
         vm.deal(who, 1 ether);
-        uint256 fee = studio.launchFee();
+        uint256 fee = studio.launchFee(nl.length / 7);
         vm.prank(who);
         b = studio.createStrategy{value: fee}("Carol AI + BTC", "CAROLdw", coins, nl);
     }
@@ -50,7 +51,7 @@ contract StudioTest is XLayerFork {
     function test_excessFeeIsRefunded() public {
         (bytes memory nl,,) = _netlist("fixture-nvda-btc");
         vm.deal(carol, 1 ether);
-        uint256 fee = studio.launchFee();
+        uint256 fee = studio.launchFee(nl.length / 7);
         vm.prank(carol);
         studio.createStrategy{value: fee + 0.5 ether}("x", "X", _two(WNVDAX, XBTC), nl);
         assertEq(carol.balance, 1 ether - fee);
@@ -59,25 +60,25 @@ contract StudioTest is XLayerFork {
     function test_refusesWeightsThatDoNotSumTo100() public {
         (bytes memory nl,,) = _netlist("fixture-bad-sum");
         vm.deal(carol, 1 ether);
-        uint256 fee = studio.launchFee();
+        uint256 fee = studio.launchFee(nl.length / 7);
         vm.prank(carol);
-        vm.expectRevert(abi.encodeWithSelector(DarwinStudio.BadWeights.selector, type(uint256).max, uint8(90)));
+        vm.expectRevert(abi.encodeWithSelector(DarwinGuard.BadWeights.selector, type(uint256).max, uint8(90), true));
         studio.createStrategy{value: fee}("x", "X", _two(WNVDAX, XBTC), nl);
     }
 
     function test_refusesWeightOnAMissingCoin() public {
         (bytes memory nl,,) = _netlist("fixture-extra-index");
         vm.deal(carol, 1 ether);
-        uint256 fee = studio.launchFee();
+        uint256 fee = studio.launchFee(nl.length / 7);
         vm.prank(carol);
-        vm.expectRevert(abi.encodeWithSelector(DarwinStudio.BadWeights.selector, 2, uint8(20)));
+        vm.expectRevert(abi.encodeWithSelector(DarwinGuard.BadWeights.selector, 2, uint8(20), true));
         studio.createStrategy{value: fee}("x", "X", _two(WNVDAX, XBTC), nl);
     }
 
     function test_refusesAnUnlistedCoin() public {
         (bytes memory nl,,) = _netlist("fixture-nvda-btc");
         vm.deal(carol, 1 ether);
-        uint256 fee = studio.launchFee();
+        uint256 fee = studio.launchFee(nl.length / 7);
         vm.prank(carol);
         vm.expectRevert(DarwinStudio.BadCoins.selector);
         studio.createStrategy{value: fee}("x", "X", _two(WNVDAX, address(0xBAD)), nl);
@@ -86,7 +87,7 @@ contract StudioTest is XLayerFork {
     function test_refusesACircuitWithLatches() public {
         (bytes memory nl,,) = _netlist("darwin-breaker"); // has LATCH records: not a methodology
         vm.deal(carol, 1 ether);
-        uint256 fee = studio.launchFee();
+        uint256 fee = studio.launchFee(nl.length / 7);
         vm.prank(carol);
         vm.expectRevert(DarwinStudio.BadNetlist.selector);
         studio.createStrategy{value: fee}("x", "X", _two(WNVDAX, XBTC), nl);
@@ -94,7 +95,7 @@ contract StudioTest is XLayerFork {
 
     function test_refusesWithoutTheFee() public {
         (bytes memory nl,,) = _netlist("fixture-nvda-btc");
-        uint256 fee = studio.launchFee();
+        uint256 fee = studio.launchFee(nl.length / 7);
         if (fee == 0) return; // a free processor has nothing to check
         vm.prank(carol);
         vm.expectRevert();

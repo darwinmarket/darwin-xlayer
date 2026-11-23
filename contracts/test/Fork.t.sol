@@ -135,19 +135,29 @@ contract ForkTest is XLayerFork {
         (v[0], v[1], v[2]) = (a, b, c);
         uint256[] memory t = new uint256[](3);
         (t[0], t[1], t[2]) = (5000, 3000, 2000);
-        uint256[] memory alloc = router.allocate(v, t, q, uint256(q) * 1e12);
+        uint256[] memory alloc = router.allocate(v, t, q, uint256(q) * 1e12, 0);
         assertEq(alloc[0] + alloc[1] + alloc[2], q, "everything allocated");
     }
 
     // ---- the policy refuses bad prices -----------------------------------------------------------
 
-    function test_buyRefusedWhenAPoolIsManipulated() public {
+    function test_aManipulatedCoinGetsNoMoney() public {
         // a whale pushes xETH 5%+ above its oracle just before the buy
         _pushPool(USDG, XETH, 500, 400_000e6);
-        _fund(alice, USDG, 1_000e6);
-        vm.prank(alice);
-        vm.expectRevert();
-        router.buy(blue, USDG, 1_000e6, 0, block.timestamp, alice);
+        assertFalse(guard.eligible(XETH), "a pool off its oracle makes the coin ineligible");
+        uint256 ethBefore = IERC20(XETH).balanceOf(address(blue));
+        uint256 shares = _buy(alice, blue, USDG, 1_000e6);
+        assertEq(IERC20(XETH).balanceOf(address(blue)), ethBefore, "nothing bought at the manipulated price");
+        assertGe(shares * _navPerShare(blue) / 1e18, 985e18, "the buyer still gets full value");
+    }
+
+    function test_aManipulatedLegIsRefused() public {
+        // the coin stays eligible (TWAP and spot on the oracle when judged), but its swap runs at
+        // a price pushed within the same transaction: the swap minimum and the circuit refuse it
+        DarwinGuard.Leg memory l = DarwinGuard.Leg(9, 0, true, true, 0, true, true); // 2.25% off
+        (bool allow, uint8 severity) = guard.policy(l);
+        assertFalse(allow);
+        assertEq(severity, 2);
     }
 
     function test_sequencerDownClosesBuying() public {
