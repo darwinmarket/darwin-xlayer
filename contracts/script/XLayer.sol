@@ -70,7 +70,9 @@ library XLayer {
     address internal constant TAPEOUT_BEACON = 0xf70d1ed4f62CF3780157B0b421b7E2F45bD0991C;
     address internal constant BEM = 0x60e62Efa9405d6873C5deaBD4E6CC91c25363952; // pays TapeOut's processor deploy fee
 
-    uint32 internal constant CRYPTO_HEARTBEAT = 86_400; // Chainlink heartbeat on X Layer
+    /// Chainlink's 24 h heartbeat on X Layer, plus 15 minutes: the feeds land 5 to 30 s late every day,
+    /// and a feed "late" by seconds must not close buying.
+    uint32 internal constant CRYPTO_HEARTBEAT = 86_400 + 15 minutes;
     uint32 internal constant EQUITY_HEARTBEAT = 6 hours; // in session a 24/5 equity feed moves far more often
 
     /// The markets, pairs before the markets they price (the oracle checks that order).
