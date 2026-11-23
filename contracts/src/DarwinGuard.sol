@@ -261,4 +261,36 @@ contract DarwinGuard {
     function checkMethodology(uint256 id, bytes32 hash) external view {
         checkCircuit(processor, id, hash, METHOD_IN, METHOD_OUT, 0);
     }
+
+    /// The largest methodology accepted: keeps every buy far below the circuit call's gas budget.
+    uint32 public constant MAX_METHOD_GATES = 400;
+
+    error BadWeights(uint256 index, uint8 weight, bool eligible);
+    error BadBand(uint8 band);
+    error TooManyGates(uint32 gates);
+
+    /// Reverts unless circuit `id` is a methodology for `n` coins: evaluated on chain for all 16
+    /// inputs, each listed coin gets a weight in 1..100 when eligible and 0 when not, the weights
+    /// sum to 100, one band in 1..15, and nothing for an index beyond the coins. At most 400 gates.
+    function checkWeights(uint256 id, uint256 n) external view {
+        (,,, uint32 gates) = processor.circuitInfo(id);
+        if (gates > MAX_METHOD_GATES) revert TooManyGates(gates);
+        uint256 sum;
+        uint8 band;
+        for (uint8 i; i < 8; i++) {
+            (uint8 w, uint8 b) = this.methodology(id, i, true);
+            (uint8 wOff,) = this.methodology(id, i, false);
+            if (wOff != 0) revert BadWeights(i, wOff, false);
+            if (i < n) {
+                if (w == 0 || w > 100) revert BadWeights(i, w, true);
+                if (i == 0) band = b;
+                else if (b != band) revert BadBand(b);
+                sum += w;
+            } else if (w != 0) {
+                revert BadWeights(i, w, true);
+            }
+        }
+        if (sum != 100) revert BadWeights(type(uint256).max, uint8(sum > 255 ? 255 : sum), true);
+        if (band == 0 || band > 15) revert BadBand(band);
+    }
 }
