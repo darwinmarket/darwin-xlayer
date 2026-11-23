@@ -158,12 +158,15 @@ export function WalletProvider({ children }: { children: ReactNode }) {
             chainId: hex,
             chainName: xLayer.name,
             nativeCurrency: xLayer.nativeCurrency,
-            rpcUrls: [RPC_URL],
+            // never hand a visitor's wallet a local RPC
+            rpcUrls: [/127\.0\.0\.1|localhost/.test(RPC_URL) ? "https://rpc.xlayer.tech" : RPC_URL],
             blockExplorerUrls: ["https://www.oklink.com/xlayer"],
           },
         ],
       } as never);
     }
+    const now = Number((await active.provider.request({ method: "eth_chainId" } as never)) as string);
+    if (now !== xLayer.id) throw new Error("Switch your wallet to X Layer (chain 196) to continue");
     setChainId(xLayer.id);
   }, [active]);
 

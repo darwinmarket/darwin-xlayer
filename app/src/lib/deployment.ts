@@ -42,6 +42,12 @@ export const DEPLOYMENT: Deployment | null = file
 
 export const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || (IS_LOCAL ? "http://127.0.0.1:8546" : "https://rpc.xlayer.tech");
 
+// A production build that would ship a local fork's addresses or RPC is a mistake: refuse it.
+if (process.env.NODE_ENV === "production" && process.env.DARWIN_ALLOW_LOCAL_BUILD !== "1") {
+  if (IS_LOCAL || !file) throw new Error(`production build needs NEXT_PUBLIC_DEPLOYMENT=xlayer and deployments/xlayer.json (got "${DEPLOYMENT_NAME}")`);
+  if (/127\.0\.0\.1|localhost/.test(RPC_URL)) throw new Error(`production build with a local RPC: ${RPC_URL}`);
+}
+
 /** X Layer mainnet. The local deployment is an anvil fork of it, so it keeps chain id 196. */
 export const xLayer = defineChain({
   id: 196,
