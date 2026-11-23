@@ -15,10 +15,10 @@ contract ForkTest is XLayerFork {
 
     function test_circuitsTapedOutOnTheRealProcessor() public view {
         (uint32 nIn, uint32 nOut, uint32 nState, uint32 gates) = processor.circuitInfo(policyId);
-        assertEq(nIn, 14);
+        assertEq(nIn, 15);
         assertEq(nOut, 3);
         assertEq(nState, 0);
-        assertEq(gates, 105);
+        assertEq(gates, 147);
         (nIn, nOut, nState, gates) = processor.circuitInfo(breakerId);
         assertEq(nState, 4);
         assertEq(keccak256(processor.netlist(policyId)), circuitHash["darwin-trade-policy"]);
@@ -40,7 +40,7 @@ contract ForkTest is XLayerFork {
         internal
         view
     {
-        (bool a, uint8 s) = guard.policy(DarwinGuard.Leg(dev, age, seq, isBuy, drift, better, true));
+        (bool a, uint8 s) = guard.policy(DarwinGuard.Leg(dev, age, seq, isBuy, drift, better, true, false));
         assertEq(a, allow, "allow");
         assertEq(s, sev, "severity");
     }
@@ -154,7 +154,7 @@ contract ForkTest is XLayerFork {
     function test_aManipulatedLegIsRefused() public {
         // the coin stays eligible (TWAP and spot on the oracle when judged), but its swap runs at
         // a price pushed within the same transaction: the swap minimum and the circuit refuse it
-        DarwinGuard.Leg memory l = DarwinGuard.Leg(9, 0, true, true, 0, true, true); // 2.25% off
+        DarwinGuard.Leg memory l = DarwinGuard.Leg(9, 0, true, true, 0, true, true, false); // 2.25% off
         (bool allow, uint8 severity) = guard.policy(l);
         assertFalse(allow);
         assertEq(severity, 2);
@@ -219,7 +219,7 @@ contract ForkTest is XLayerFork {
     function test_processorUpgradeFailsClosed() public {
         vm.mockCall(XLayer.TAPEOUT_BEACON, abi.encodeWithSelector(IBeacon.implementation.selector), abi.encode(address(0xBEEF)));
         vm.expectRevert(abi.encodeWithSelector(DarwinGuard.ProcessorUpgraded.selector, address(0xBEEF)));
-        guard.policy(DarwinGuard.Leg(0, 0, true, true, 0, false, true));
+        guard.policy(DarwinGuard.Leg(0, 0, true, true, 0, false, true, false));
         _fund(alice, USDG, 100e6);
         vm.prank(alice);
         vm.expectRevert();

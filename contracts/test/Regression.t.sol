@@ -58,6 +58,7 @@ contract RegressionTest is XLayerFork {
         _mockFeed(XLayer.FEED_USDG, _feedAnswer(XLayer.FEED_USDG), 60);
         _mockFeed(XLayer.FEED_XBTC_BTC, _feedAnswer(XLayer.FEED_XBTC_BTC), 60);
         assertFalse(oracle.sessionOpen(WCRCLX));
+        assertFalse(oracle.poolPriced(WCRCLX), "its pool has not traded since Friday: no live price");
         assertEq(router.closedHolding(cryptoEq), WCRCLX);
 
         _fund(attacker, USDG, 10_000e6);

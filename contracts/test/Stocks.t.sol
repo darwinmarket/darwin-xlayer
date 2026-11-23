@@ -102,15 +102,16 @@ contract StocksTest is XLayerFork {
         vm.prank(alice);
         router.buy(core, USDG, 300e6, 0, block.timestamp, alice);
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        bytes32 sig = keccak256("Leg(address,address,bool,uint256,uint256,uint8,uint8,uint8,bool,bool,uint8)");
+        bytes32 sig = keccak256("Leg(address,address,bool,uint256,uint256,uint8,uint8,uint8,bool,bool,bool,uint8)");
         uint256 legs;
         for (uint256 i; i < logs.length; i++) {
             if (logs[i].emitter != address(router) || logs[i].topics[0] != sig) continue;
             legs++;
-            (bool isBuy,,, uint8 dev,,,, bool open, uint8 severity) =
-                abi.decode(logs[i].data, (bool, uint256, uint256, uint8, uint8, uint8, bool, bool, uint8));
+            (bool isBuy,,, uint8 dev,,,, bool open, bool pool, uint8 severity) =
+                abi.decode(logs[i].data, (bool, uint256, uint256, uint8, uint8, uint8, bool, bool, bool, uint8));
             assertTrue(isBuy);
             assertTrue(open, "in session");
+            assertFalse(pool, "priced by Chainlink");
             assertLe(dev, 8, "within 2% of Chainlink");
             assertLe(severity, 1, "allowed");
         }
