@@ -65,10 +65,12 @@ export function TradePanel({ b, markets, onTraded }: { b: BasketInfo; markets: M
   // ---- market states -------------------------------------------------------------------------
   const t = useChainNow(markets.chainTime);
   const stocksClosed = b.hasStocks && !usOpen(t);
-  const allStocks = b.kind === "stocks";
   const tripped = b.breaker.tripped || !!b.preview?.tripped || !b.buyOpen;
   const noEligible = b.holdings.every((h) => !h.eligible);
-  const buyBlocked = tripped || noEligible;
+  // the router refuses any buy while the basket holds a stock outside its session (MarketClosed):
+  // its value would use a price frozen since the close
+  const heldStockClosed = stocksClosed && b.holdings.some((h) => h.meta.kind === "stock" && h.balance > 0n);
+  const buyBlocked = tripped || noEligible || heldStockClosed;
   const sellBlocked = stocksClosed; // a closed stock cannot be sold on its pool: the policy refuses it
 
   // ---- quote ---------------------------------------------------------------------------------
@@ -202,18 +204,19 @@ export function TradePanel({ b, markets, onTraded }: { b: BasketInfo; markets: M
             : "The market-risk circuit sees an unhealthy market now (see the breaker facts below): its next beat trips the basket, so buying is closed. Selling and redeeming stay open."}
         </div>
       )}
-      {side === "buy" && stocksClosed && allStocks && (
+      {side === "buy" && heldStockClosed && (
         <div className="notice notice-warn" data-testid="state-closed">
-          <strong>US market closed — buys reopen Monday 01:00 UTC</strong> (in {countdown(reopen - t)}). xStocks follow the US equities 24/5
-          session.
+          <strong>US market closed — buys reopen Monday 01:00 UTC</strong> (in {countdown(reopen - t)}). This basket holds xStocks, which
+          follow the US equities 24/5 session: while their prices are frozen nobody can buy in, so no one takes Monday&apos;s gap from the
+          holders. Redeeming in kind stays open.
         </div>
       )}
-      {side === "buy" && !tripped && stocksClosed && !allStocks && !noEligible && (
+      {side === "buy" && !tripped && stocksClosed && !heldStockClosed && !noEligible && (
         <div className="notice notice-info">
           <strong>US market closed.</strong> New money goes to the coins that trade now; the stocks catch up when the session reopens.
         </div>
       )}
-      {side === "buy" && !tripped && noEligible && !(stocksClosed && allStocks) && (
+      {side === "buy" && !tripped && noEligible && !heldStockClosed && (
         <div className="notice notice-warn">
           <strong>No coin is eligible for new money right now</strong> (stale feeds or pools away from their oracle).
         </div>
@@ -319,7 +322,7 @@ export function TradePanel({ b, markets, onTraded }: { b: BasketInfo; markets: M
         </button>
       ) : side === "buy" && buyBlocked ? (
         <button className="btn btn-l btn-block" disabled>
-          {tripped ? "Buying closed" : stocksClosed ? "Market closed" : "No eligible coin"}
+          {tripped ? "Buying closed" : heldStockClosed || stocksClosed ? "Market closed" : "No eligible coin"}
         </button>
       ) : parsed === 0n ? (
         <button className="btn btn-l btn-block" disabled>
