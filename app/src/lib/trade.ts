@@ -69,6 +69,8 @@ export type LegEvent = {
   drift: number;
   better: boolean;
   open: boolean;
+  /** Priced by its own pool (a stock whose Chainlink feed is frozen: weekend, holiday). */
+  pool: boolean;
   severity: number;
   logIndex: number;
 };
@@ -96,6 +98,7 @@ export function decodeTrade(receipt: TransactionReceipt) {
         drift: Number(a.drift),
         better: a.better as boolean,
         open: a.open as boolean,
+        pool: Boolean(a.pool),
         severity: Number(a.severity),
         logIndex: l.logIndex ?? 0,
       });

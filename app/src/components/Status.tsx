@@ -28,7 +28,7 @@ export function SessionBadge({ chainTime, compact = false }: { chainTime: number
   return (
     <span className={`tag ${open ? "tag-pos" : "tag-warn"}`} title={`Next change ${utcMoment(nextChange(t))}`} data-testid="session">
       <span className={`dot${open ? " dot-live" : ""}`} />
-      {open ? "US stocks open" : "US stocks closed"}
+      {open ? "US stocks open" : "US closed · pool pricing"}
       {!compact && <span style={{ fontWeight: 500, textTransform: "none", letterSpacing: 0 }}>· {open ? "closes" : "opens"} in {countdown(left)}</span>}
     </span>
   );

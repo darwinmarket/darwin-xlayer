@@ -6,9 +6,9 @@ import { publicClient } from "./client";
 import { DEPLOYMENT } from "./deployment";
 import { toHex } from "./format";
 
-export type PolicyInput = { dev: number; age: number; seqUp: number; isBuy: number; drift: number; better: number; open: number };
+export type PolicyInput = { dev: number; age: number; seqUp: number; isBuy: number; drift: number; better: number; open: number; pool: number };
 
-/** The 14 input bits, LSB first, exactly as DarwinGuard.policyInputs packs them. */
+/** The 15 input bits, LSB first, exactly as DarwinGuard.policyInputs packs them. */
 export function policyBits(i: PolicyInput): number[] {
   const bits = new Array(POLICY_IN.n).fill(0);
   toBits(Math.min(i.dev, 15), 4).forEach((b, k) => (bits[POLICY_IN.dev + k] = b));
@@ -18,6 +18,7 @@ export function policyBits(i: PolicyInput): number[] {
   toBits(Math.min(i.drift, 15), 4).forEach((b, k) => (bits[POLICY_IN.drift + k] = b));
   bits[POLICY_IN.better] = i.better;
   bits[POLICY_IN.open] = i.open;
+  bits[POLICY_IN.pool] = i.pool;
   return bits;
 }
 

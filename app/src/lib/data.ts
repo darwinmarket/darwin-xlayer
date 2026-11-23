@@ -2,6 +2,7 @@ import type { Address } from "viem";
 import { darwinBasketAbi } from "@/abi/DarwinBasket";
 import { darwinGuardAbi } from "@/abi/DarwinGuard";
 import { darwinOracleAbi } from "@/abi/DarwinOracle";
+import { darwinRouterAbi } from "@/abi/DarwinRouter";
 import { darwinStudioAbi } from "@/abi/DarwinStudio";
 import { erc20Abi } from "@/abi/ERC20";
 import { assetMeta, basketKind, type AssetMeta } from "./assets";
@@ -20,9 +21,15 @@ export type Market = {
   updatedAt: number;
   ageClass: number;
   open: boolean;
+  /** A stock priced by its own pool's 1-hour TWAP while its Chainlink feed is frozen. */
+  poolPriced: boolean;
+  /** Has a live price (in session, or pool-priced): it can be bought and sold. */
+  tradable: boolean;
 };
 
 export type Markets = { list: Market[]; byAddress: Map<string, Market>; chainTime: number; block: bigint; sequencerUp: boolean };
+
+const ZERO = "0x0000000000000000000000000000000000000000";
 
 const D = (): Deployment => {
   if (!DEPLOYMENT) throw new Error("No deployment configured");
@@ -38,7 +45,7 @@ export async function loadMarkets(): Promise<Markets> {
   ]);
   const per = await Promise.all(
     tokens.map(async (t) => {
-      const [symbol, decimals, market, price, age, open] = await publicClient.multicall({
+      const [symbol, decimals, market, price, age, open, poolPriced, tradable] = await publicClient.multicall({
         allowFailure: true,
         contracts: [
           { address: t, abi: erc20Abi, functionName: "symbol" },
@@ -47,6 +54,8 @@ export async function loadMarkets(): Promise<Markets> {
           { address: d.oracle, abi: darwinOracleAbi, functionName: "price", args: [t] },
           { address: d.oracle, abi: darwinOracleAbi, functionName: "ageClass", args: [t] },
           { address: d.oracle, abi: darwinOracleAbi, functionName: "sessionOpen", args: [t] },
+          { address: d.oracle, abi: darwinOracleAbi, functionName: "poolPriced", args: [t] },
+          { address: d.oracle, abi: darwinOracleAbi, functionName: "tradable", args: [t] },
         ],
       });
       const sym = symbol.status === "success" ? symbol.result : t.slice(0, 8);
@@ -64,6 +73,8 @@ export async function loadMarkets(): Promise<Markets> {
         updatedAt: price.status === "success" ? Number(price.result[1]) : 0,
         ageClass: age.status === "success" ? Number(age.result) : 3,
         open: open.status === "success" ? open.result : false,
+        poolPriced: poolPriced.status === "success" ? poolPriced.result : false,
+        tradable: tradable.status === "success" ? tradable.result : false,
       };
       return m;
     }),
@@ -118,6 +129,8 @@ export type BasketInfo = {
   buyOpen: boolean;
   /** Some coin is a US stock. */
   hasStocks: boolean;
+  /** A held coin without a live price (router.closedHolding): no buy until it has one. */
+  closedHolding: Address | null;
 };
 
 export async function loadBasketAddresses(): Promise<Address[]> {
@@ -149,6 +162,7 @@ export async function loadBasket(address: Address, markets: Markets): Promise<Ba
       { ...g, functionName: "preview", args: [address] },
       { ...g, functionName: "buyOpen", args: [address] },
       { address: d.studio, abi: darwinStudioAbi, functionName: "isBasket", args: [address] },
+      { address: d.router, abi: darwinRouterAbi, functionName: "closedHolding", args: [address] },
     ],
   });
   const ok = <T,>(x: { status: string; result?: unknown }, fallback: T): T => (x.status === "success" ? (x.result as T) : fallback);
@@ -208,6 +222,10 @@ export async function loadBasket(address: Address, markets: Markets): Promise<Ba
     // official = launched by the deployment's treasury (Darwin); anyone else's is a community strategy
     official: Boolean(d.treasury) && ok<string>(r[7], "").toLowerCase() === (d.treasury ?? "").toLowerCase(),
     hasStocks: holdings.some((h) => h.meta.kind === "stock"),
+    closedHolding: (() => {
+      const c = ok<string>(r[16], ZERO);
+      return c.toLowerCase() === ZERO ? null : (c as Address);
+    })(),
   };
 }
 
@@ -219,7 +237,7 @@ export async function loadBaskets(): Promise<{ markets: Markets; baskets: Basket
 
 /** The five breaker facts, as the guard packs them (DarwinGuard.facts). */
 export const FACTS = [
-  { bit: 0, label: "Feeds alive", hint: "the quote's feed under an hour old, every coin in session within heartbeat + grace" },
+  { bit: 0, label: "Feeds alive", hint: "the quote's feed under an hour old, every crypto feed within heartbeat + grace (a stock's resting feed is not an incident)" },
   { bit: 1, label: "Sequencer up", hint: "X Layer's sequencer is up and past its grace period (Chainlink uptime feed)" },
   { bit: 2, label: "Quote on peg", hint: "USDG within 1% of $1 by its Chainlink feed" },
   { bit: 3, label: "Pools on oracle", hint: "no pool more than 10% away from its oracle (30-minute TWAP)" },

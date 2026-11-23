@@ -67,11 +67,13 @@ export function TradePanel({ b, markets, onTraded }: { b: BasketInfo; markets: M
   const stocksClosed = b.hasStocks && !usOpen(t);
   const tripped = b.breaker.tripped || !!b.preview?.tripped || !b.buyOpen;
   const noEligible = b.holdings.every((h) => !h.eligible);
-  // the router refuses any buy while the basket holds a stock outside its session (MarketClosed):
-  // its value would use a price frozen since the close
-  const heldStockClosed = stocksClosed && b.holdings.some((h) => h.meta.kind === "stock" && h.balance > 0n);
+  // outside the session a stock is priced by its own pool (1-hour TWAP, within bounds); the router
+  // refuses any buy while the basket holds a coin with no live price at all (MarketClosed), and
+  // the policy refuses to sell such a coin
+  const heldStockClosed = b.closedHolding !== null;
+  const poolPriced = b.holdings.some((h) => h.meta.kind === "stock" && h.market?.poolPriced);
   const buyBlocked = tripped || noEligible || heldStockClosed;
-  const sellBlocked = stocksClosed; // a closed stock cannot be sold on its pool: the policy refuses it
+  const sellBlocked = heldStockClosed;
 
   // ---- quote ---------------------------------------------------------------------------------
   useEffect(() => {
@@ -206,14 +208,22 @@ export function TradePanel({ b, markets, onTraded }: { b: BasketInfo; markets: M
       )}
       {side === "buy" && heldStockClosed && (
         <div className="notice notice-warn" data-testid="state-closed">
-          <strong>US market closed — buys reopen Monday 01:00 UTC</strong> (in {countdown(reopen - t)}). This basket holds xStocks, which
-          follow the US equities 24/5 session: while their prices are frozen nobody can buy in, so no one takes Monday&apos;s gap from the
-          holders. Redeeming in kind stays open.
+          <strong>{stocksClosed ? "US market closed" : "Stock price unavailable"} — no live price for a stock this basket holds.</strong>{" "}
+          Outside the session, xStocks are priced by their own Uniswap pools, but only while a pool trades steadily near its last
+          Chainlink price. Until then nobody can buy in, so no one takes the reopening gap from the holders
+          {stocksClosed ? <> (the session reopens in {countdown(reopen - t)})</> : null}. Redeeming in kind stays open.
         </div>
       )}
-      {side === "buy" && !tripped && stocksClosed && !heldStockClosed && !noEligible && (
+      {!tripped && !heldStockClosed && poolPriced && (
+        <div className="notice notice-info" data-testid="state-pool-priced">
+          <strong>{stocksClosed ? "Weekend pricing." : "Pool pricing."}</strong> Chainlink&apos;s stock prices rest outside the US
+          session, but the xStocks pools keep trading: they are priced by their own pool&apos;s one-hour average, and the trade-policy
+          circuit holds each leg to 1.5% of it on a buy, 2% on a sell.
+        </div>
+      )}
+      {side === "buy" && !tripped && stocksClosed && !heldStockClosed && !poolPriced && !noEligible && (
         <div className="notice notice-info">
-          <strong>US market closed.</strong> New money goes to the coins that trade now; the stocks catch up when the session reopens.
+          <strong>US market closed.</strong> New money goes to the coins that trade now; the stocks catch up when they have a price.
         </div>
       )}
       {side === "buy" && !tripped && noEligible && !heldStockClosed && (
@@ -223,8 +233,9 @@ export function TradePanel({ b, markets, onTraded }: { b: BasketInfo; markets: M
       )}
       {side === "sell" && sellBlocked && (
         <div className="notice notice-warn" data-testid="state-closed-sell">
-          <strong>US market closed until {utcMoment(reopen)}.</strong> Stock pools cannot be sold into while the session is closed. You can
-          always redeem in kind: your shares become the underlying xStocks, pro rata.
+          <strong>No live price for a stock this basket holds{stocksClosed ? ` (US market closed until ${utcMoment(reopen)})` : ""}.</strong>{" "}
+          Its legs cannot be sold until its pool prices it again. You can always redeem in kind: your shares become the underlying
+          xStocks, pro rata.
         </div>
       )}
 

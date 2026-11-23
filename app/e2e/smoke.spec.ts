@@ -20,7 +20,7 @@ test.describe("read only", () => {
     // a cold fork fetches every slot from X Layer on first read: allow it time
     await expect(page.getByTestId("basket-card").first()).toBeVisible({ timeout: 90_000 });
     expect(await page.getByTestId("basket-card").count()).toBeGreaterThanOrEqual(1);
-    await expect(page.getByTestId("session").first()).toContainText(/US stocks (open|closed)/);
+    await expect(page.getByTestId("session").first()).toContainText(/US (stocks open|closed)/);
     await expect(page.getByTestId("breaker").first()).toBeVisible();
   });
 

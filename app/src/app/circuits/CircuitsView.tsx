@@ -151,7 +151,7 @@ function CircuitCard({
 }
 
 function PolicyExplorer({ c }: { c: OnchainCircuit }) {
-  const [i, setI] = useState<PolicyInput>({ dev: 2, age: 0, seqUp: 1, isBuy: 1, drift: 3, better: 1, open: 1 });
+  const [i, setI] = useState<PolicyInput>({ dev: 2, age: 0, seqUp: 1, isBuy: 1, drift: 3, better: 1, open: 1, pool: 0 });
   const bits = useMemo(() => policyBits(i), [i]);
   const local = useMemo(() => verdictOf(c.circuit.eval(bits)), [c, bits]);
   const model = tradePolicyModel(i);
@@ -176,9 +176,9 @@ function PolicyExplorer({ c }: { c: OnchainCircuit }) {
   const runSweep = () => {
     const t0 = performance.now();
     let bad = 0;
-    const n = 1 << 14;
+    const n = 1 << 15;
     for (let v = 0; v < n; v++) {
-      const b = toBits(v, 14);
+      const b = toBits(v, 15);
       const inp = {
         dev: v & 15,
         age: (v >> 4) & 3,
@@ -187,6 +187,7 @@ function PolicyExplorer({ c }: { c: OnchainCircuit }) {
         drift: (v >> 8) & 15,
         better: (v >> 12) & 1,
         open: (v >> 13) & 1,
+        pool: (v >> 14) & 1,
       };
       const out = verdictOf(c.circuit.eval(b));
       const m = tradePolicyModel(inp);
@@ -242,6 +243,7 @@ function PolicyExplorer({ c }: { c: OnchainCircuit }) {
               [
                 ["isBuy", "Buy leg"],
                 ["open", "Market in session"],
+                ["pool", "Priced by its pool"],
                 ["seqUp", "Sequencer up"],
                 ["better", "Moves towards target"],
               ] as const

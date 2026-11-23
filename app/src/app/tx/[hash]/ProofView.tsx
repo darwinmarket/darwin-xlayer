@@ -54,6 +54,7 @@ async function loadProof(hash: Hash) {
         drift: leg.drift,
         better: leg.better ? 1 : 0,
         open: leg.open ? 1 : 0,
+        pool: leg.pool ? 1 : 0,
       };
       const bits = policyBits(input);
       const local = verdictOf(circuit.circuit.eval(bits));
@@ -202,13 +203,14 @@ function LegCard({ l, i, markets }: { l: LegProof; i: number; markets: Markets }
   const match = l.onchain ? sameVerdict(l.local, l.onchain) : false;
   const matchesEvent = l.local.severity === l.leg.severity;
   const inputs: [string, string, string][] = [
-    ["dev", `${l.input.dev}`, `|execution − Chainlink| = ${(l.input.dev * 0.25).toFixed(2)}%${l.input.dev >= 15 ? "+" : ""} (0.25% steps)`],
+    ["dev", `${l.input.dev}`, `|execution − ${l.input.pool ? "pool's 1-hour price" : "Chainlink"}| = ${(l.input.dev * 0.25).toFixed(2)}%${l.input.dev >= 15 ? "+" : ""} (0.25% steps)`],
     ["age", `${l.input.age}`, `oracle age class: ${AGE[l.input.age]}`],
     ["seqUp", `${l.input.seqUp}`, l.input.seqUp ? "X Layer sequencer up" : "sequencer down"],
     ["isBuy", `${l.input.isBuy}`, l.input.isBuy ? "buy leg (stablecoin → coin)" : "sell leg (coin → stablecoin)"],
     ["drift", `${l.input.drift}`, `|weight after − target| = ${l.input.drift} pp`],
     ["better", `${l.input.better}`, l.input.better ? "moves the coin towards its target" : "moves it further away"],
     ["open", `${l.input.open}`, l.input.open ? "market in session" : "market closed"],
+    ["pool", `${l.input.pool}`, l.input.pool ? "priced by its own Uniswap pool (1-hour TWAP): Chainlink is frozen" : "priced by Chainlink"],
   ];
   return (
     <div className="card" data-testid="leg">
