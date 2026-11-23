@@ -9,7 +9,8 @@ import {IAggregator, IUniswapV3Pool} from "./interfaces/External.sol";
 /// the facts Darwin's circuits read: Chainlink prices and their age, trading sessions, the L2
 /// sequencer, pegs, reserves, and Uniswap v3 spot and TWAP prices.
 /// Tokenized stocks trade on Uniswap around the clock while their Chainlink feeds follow the US
-/// session: when a stock's feed is frozen, its pool's one-hour TWAP prices it, within bounds.
+/// session: when a stock's feed is frozen, its pool's own price prices it, within bounds (the
+/// spot price, accepted only within 1% of the pool's one-hour TWAP).
 /// Configured once at deployment, no admin: a new market list means a new oracle.
 contract DarwinOracle {
     /// Always open (crypto, stablecoins).
@@ -196,11 +197,15 @@ contract DarwinOracle {
 
     // ---- stocks priced by their pool -------------------------------------------------------------
 
-    /// The pool's time-weighted average over this window prices a stock while its feed rests.
+    /// While its feed rests, a stock is priced at its pool's spot price: the price a trade gets
+    /// right now. The spot is accepted only within 1% of the pool's time-weighted average over this
+    /// window (one flash loan cannot move an hour's average: pushing the spot further than 1% from
+    /// it removes the price instead of moving it, so a push gains at most 1% of the stock's weight,
+    /// less than the trade's fees),
     uint32 public constant POOL_WINDOW = 1 hours;
-    /// It must stay within 10% of the stock's last Chainlink price (a weekend moves a few percent),
+    /// and that average must stay within 10% of the stock's last Chainlink price (a weekend moves a
+    /// few percent).
     uint256 public constant POOL_ANCHOR_BPS = 1_000;
-    /// and the pool's spot price within 1% of it (a pool being pushed right now is not trusted).
     uint256 public constant POOL_SPOT_BPS = 100;
 
     /// A stock whose Chainlink price is frozen: market closed, or feed past its heartbeat.
@@ -213,9 +218,10 @@ contract DarwinOracle {
 
     /// Whether `token` is priced by its pool now: a stock whose Chainlink price is frozen, whose
     /// pool traded within the stock's heartbeat (a quiet pool is as frozen as the feed), has an
-    /// hour of history, a time-weighted price within 10% of the last Chainlink price, a spot price
-    /// within 1% of that, and a pair that is priced too.
-    /// Moving that price means holding a pool off the market for an hour against every arbitrageur
+    /// hour of history, a one-hour time-weighted price within 10% of the last Chainlink price, a
+    /// spot price within 1% of that, and a pair that is priced too. The price is then the spot.
+    /// Within a block the price can be pushed by 1% at most (further and the stock has no price);
+    /// moving it more means holding the pool off the market for an hour against every arbitrageur
     /// (the xStocks pools trade around the clock against 24/7 venues), and by 10% at most.
     function poolPriced(address token) public view returns (bool ok) {
         Market memory m = markets[token];
@@ -245,8 +251,9 @@ contract DarwinOracle {
         (bool fine, uint256 last,) = _feed(m);
         if (!fine || _bps(tw, last) > POOL_ANCHOR_BPS) return (false, 0);
         (uint160 sqrtP,,,,,,) = m.pool.slot0();
-        if (_bps(_toUsd(m, Math.mulDiv(sqrtP, sqrtP, 1 << 64)), tw) > POOL_SPOT_BPS) return (false, 0);
-        return (true, tw);
+        uint256 spot = _toUsd(m, Math.mulDiv(sqrtP, sqrtP, 1 << 64));
+        if (_bps(spot, tw) > POOL_SPOT_BPS) return (false, 0);
+        return (true, spot);
     }
 
     /// When the pool's price last moved (its newest observation: Uniswap writes one when a trade
@@ -317,7 +324,8 @@ contract DarwinOracle {
     // ---- Uniswap ---------------------------------------------------------------------------------
 
     /// USD price of one whole token from its pool's current spot price and its pair's Chainlink
-    /// price (18 decimals). Easy to move within a block: Darwin only shows it, never decides on it.
+    /// price (18 decimals). Easy to move within a block: Darwin decides on it only for a pool-priced
+    /// stock, and only within 1% of the pool's one-hour TWAP (see `poolPriced`).
     function spotPrice(address token) public view returns (uint256) {
         Market memory m = market(token);
         if (token == quote) return _usd(quote);
