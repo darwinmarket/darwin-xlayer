@@ -213,8 +213,8 @@ contract DarwinOracle {
     }
 
     /// USD price of one whole token from its pool's time-weighted average (18 decimals): over 30
-    /// minutes, or over the longest of 10, 5 or 1 minute that the pool's observation history covers
-    /// (a busy pool with a short history). Moving it means holding the pool off price for that long,
+    /// minutes, or over 10 minutes when the pool's observation history is shorter (a busy pool;
+    /// Darwin's deployment grows the history of the busiest ones). Moving it means holding the pool off price for that long,
     /// across many blocks, not one flash loan. Returns the window used.
     function twapPrice(address token) public view returns (uint256) {
         (uint256 p,) = twap(token);
@@ -224,7 +224,7 @@ contract DarwinOracle {
     function twap(address token) public view returns (uint256 usd, uint32 window) {
         Market memory m = market(token);
         if (token == quote) return (_usd(quote), 0);
-        uint32[4] memory windows = [TWAP_WINDOW, 10 minutes, 5 minutes, 1 minutes];
+        uint32[2] memory windows = [TWAP_WINDOW, 10 minutes];
         for (uint256 i; i < windows.length; i++) {
             uint32[] memory ago = new uint32[](2);
             ago[0] = windows[i];
