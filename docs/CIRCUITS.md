@@ -21,19 +21,20 @@ budget, refuses oversized answers, and checks before each call that TapeOut's pr
 implementation is still the one it was deployed against (processors are upgradeable beacon proxies).
 When it deploys, it checks each circuit's netlist hash and shape.
 
-## 1. Trade policy (105 gates)
+## 1. Trade policy (147 gates)
 
 Called once per coin of every buy and sell.
 
 | Bit | Input | Measured on chain by |
 |---|---|---|
-| 0-3 | `dev`: execution price vs Chainlink, in 0.25% steps (saturates at 15) | `DarwinRouter._execDev` from the real swap's amounts |
-| 4-5 | `age`: 0 < 1 h, 1 < heartbeat, 2 < heartbeat + 1 h, 3 older | `DarwinOracle.ageClass` |
+| 0-3 | `dev`: execution price vs the coin's price, in 0.25% steps (saturates at 15) | `DarwinRouter._execDev` from the real swap's amounts |
+| 4-5 | `age`: 0 < 1 h, 1 < heartbeat, 2 < heartbeat + 1 h, 3 older (a pool price: its last move) | `DarwinOracle.ageClass` |
 | 6 | `seqUp`: X Layer sequencer up for more than an hour | Chainlink L2 sequencer uptime feed |
 | 7 | `isBuy` | the router |
 | 8-11 | `drift`: weight after the trade vs target, in pp | `DarwinRouter._judgeBuy` |
 | 12 | `better`: the trade does not move the coin away from its target | `DarwinRouter._judgeBuy` |
 | 13 | `open`: the coin's market is in session (US stocks: 24/5) | `DarwinOracle.sessionOpen` |
+| 14 | `pool`: a stock priced by its own pool's one-hour TWAP, its Chainlink feed being frozen | `DarwinOracle.poolPriced` |
 
 Outputs: `allow`, and a 2-bit severity: 0 clean, 1 allowed with a warning, 2 refused, 3 refused
 because the market itself is broken.
@@ -44,8 +45,14 @@ Rules:
   coin may not end more than 5 pp off its target unless the buy brings it closer.
 - Sells: within 3%, oracle within heartbeat + grace (a seller must be able to leave when a feed is
   late), sequencer up, market open. Drift never holds a sale back.
-- A stock outside its session is refused as **closed** (2), not broken (3): its feed is expected to
-  be old on a weekend.
+- A stock priced by its pool (weekend, holiday, Monday's first hour) trades, held to 1.5% on a buy
+  and 2% on a sell: its price comes from the very market it trades on.
+- A stock outside its session without a pool price is refused as **closed** (2), not broken (3):
+  its feed is expected to be old on a weekend.
+
+Checked exhaustively three ways: the circuit against the reference model on all 32,768 inputs
+(`circuits/test`), our simulator against the TAP-02 Python reference, and the taped-out circuit on
+the real TapeOut processor against the model (`circuits/scripts/onchain-sweep.ts`, 0 mismatches).
 
 ## 2. Market-risk breaker (57 gates, 4 LATCH)
 
@@ -53,7 +60,7 @@ Stateful: one state per basket, stored by `DarwinGuard`, advanced with `step()`.
 
 | Bit | Input |
 |---|---|
-| 0 | feeds alive: the quote's feed under an hour old, every coin in session within heartbeat + grace |
+| 0 | feeds alive: the quote's feed under an hour old, every crypto feed within heartbeat + grace (a stock's resting feed is not an incident: the stock is priced by its pool or gets no money) |
 | 1 | sequencer up |
 | 2 | USDG on its peg (within 1%) |
 | 3 | no pool more than 10% from its oracle (time-weighted average, never the spot price) |
@@ -68,10 +75,10 @@ Tripped means **sell only**: buying is closed, selling and redeeming in kind sta
 
 ## 3. Methodologies (one per basket)
 
-Input: a coin index (3 bits) and whether the coin is eligible (1 bit: market in session, feed
-fresh, pool near its oracle). Output: the coin's target weight in percent (7 bits) and the basket's
-band (4 bits). An ineligible coin gets 0%, so new money goes to the others until it recovers. On a
-Sunday, a basket holding both stocks and crypto buys only its crypto.
+Input: a coin index (3 bits) and whether the coin is eligible (1 bit: a live price — Chainlink in
+session, or its pool on a weekend — that is fresh, with the pool near it). Output: the coin's target
+weight in percent (7 bits) and the basket's band (4 bits). An ineligible coin gets 0%, so new money
+goes to the others until it recovers.
 
 The band is displayed with the basket; the policy circuit applies the same 5 pp band to every
 basket. The basket reads its targets from its circuit on every trade. A new methodology can only be applied
