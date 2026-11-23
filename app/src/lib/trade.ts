@@ -107,30 +107,50 @@ export function decodeTrade(receipt: TransactionReceipt) {
 
 export type TradeRow = { hash: Hash; block: bigint; basket: Address; kind: "buy" | "sell"; who: Address; payToken: Address; amount: bigint; shares: bigint };
 
-/** Recent buys and sells of a basket (or of everything, or of one account), newest first. */
-export async function recentTrades(opts: { basket?: Address; account?: Address; span?: bigint } = {}): Promise<TradeRow[]> {
+/**
+ * Recent buys and sells of a basket (or of everything, or of one account), newest first.
+ *
+ * Read from the router's on-chain record: X Layer's public RPCs only search logs 100 blocks at a
+ * time, so a log scan over days is impossible. The transaction hash comes from the logs of the
+ * trade's own block (a one-block search).
+ */
+export async function recentTrades(opts: { basket?: Address; account?: Address; limit?: number } = {}): Promise<TradeRow[]> {
   const d = DEPLOYMENT!;
-  const latest = await publicClient.getBlockNumber();
-  const span = opts.span ?? 50_000n;
-  const from = latest - span > d.block ? latest - span : d.block;
+  const n = BigInt(opts.limit ?? 20);
+  const [list] = (opts.basket
+    ? await publicClient.readContract({ address: d.router, abi: darwinRouterAbi, functionName: "recentOfBasket", args: [opts.basket, n] })
+    : opts.account
+      ? await publicClient.readContract({ address: d.router, abi: darwinRouterAbi, functionName: "recentOfTrader", args: [opts.account, n] })
+      : await publicClient.readContract({ address: d.router, abi: darwinRouterAbi, functionName: "recent", args: [n] })) as readonly [
+    readonly { basket: Address; trader: Address; payToken: Address; isBuy: boolean; blockNumber: bigint; timestamp: bigint; amount: bigint; shares: bigint }[],
+    readonly bigint[],
+  ];
   const ev = darwinRouterAbi.filter((x) => x.type === "event" && (x.name === "Bought" || x.name === "Sold"));
-  const logs = await publicClient.getLogs({ address: d.router, events: ev as never, fromBlock: from, toBlock: latest });
-  const rows: TradeRow[] = [];
-  for (const l of logs as unknown as { eventName: string; args: Record<string, unknown>; transactionHash: Hash; blockNumber: bigint }[]) {
-    const a = l.args;
-    if (opts.basket && (a.basket as string).toLowerCase() !== opts.basket.toLowerCase()) continue;
-    const who = (l.eventName === "Bought" ? a.buyer : a.seller) as Address;
-    if (opts.account && who.toLowerCase() !== opts.account.toLowerCase()) continue;
-    rows.push({
-      hash: l.transactionHash,
-      block: l.blockNumber,
-      basket: a.basket as Address,
-      kind: l.eventName === "Bought" ? "buy" : "sell",
-      who,
-      payToken: a.payToken as Address,
-      amount: (l.eventName === "Bought" ? a.amountIn : a.amountOut) as bigint,
-      shares: a.shares as bigint,
-    });
-  }
-  return rows.reverse();
+  const blocks = [...new Set(list.map((t) => t.blockNumber))];
+  const logsByBlock = new Map<bigint, { eventName: string; args: Record<string, unknown>; transactionHash: Hash }[]>();
+  await Promise.all(
+    blocks.map(async (bn) => {
+      const logs = await publicClient.getLogs({ address: d.router, events: ev as never, fromBlock: bn, toBlock: bn }).catch(() => []);
+      logsByBlock.set(bn, logs as never);
+    }),
+  );
+  return list.map((t) => {
+    const logs = logsByBlock.get(t.blockNumber) ?? [];
+    const match = logs.find(
+      (l) =>
+        (l.eventName === "Bought") === t.isBuy &&
+        (l.args.basket as string).toLowerCase() === t.basket.toLowerCase() &&
+        (l.args.shares as bigint) === t.shares,
+    );
+    return {
+      hash: (match?.transactionHash ?? "0x") as Hash,
+      block: t.blockNumber,
+      basket: t.basket,
+      kind: t.isBuy ? "buy" : "sell",
+      who: t.trader,
+      payToken: t.payToken,
+      amount: t.amount,
+      shares: t.shares,
+    } satisfies TradeRow;
+  });
 }

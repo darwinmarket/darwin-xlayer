@@ -301,7 +301,7 @@ function Trades({ b }: { b: BasketInfo }) {
             </thead>
             <tbody>
               {q.data.slice(0, 12).map((t) => (
-                <tr key={t.hash}>
+                <tr key={`${t.block}-${t.shares}-${t.kind}`}>
                   <td>
                     <span className={`tag ${t.kind === "buy" ? "tag-pos" : "tag-neg"}`}>{t.kind}</span>
                   </td>
@@ -309,9 +309,9 @@ function Trades({ b }: { b: BasketInfo }) {
                   <td className="r num">{qty(Number(formatUnits(t.shares, 18)))}</td>
                   <td className="r num xsmall muted">{int(t.block)}</td>
                   <td className="r">
-                    <Link className="link small" href={`/tx/${t.hash}`}>
+                    {t.hash !== "0x" && <Link className="link small" href={`/tx/${t.hash}`}>
                       Verdicts →
-                    </Link>
+                    </Link>}
                   </td>
                 </tr>
               ))}
