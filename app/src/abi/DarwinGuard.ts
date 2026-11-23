@@ -415,6 +415,11 @@ export const darwinGuardAbi = [
             "name": "open",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "pool",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -487,6 +492,11 @@ export const darwinGuardAbi = [
           },
           {
             "name": "open",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "pool",
             "type": "bool",
             "internalType": "bool"
           }

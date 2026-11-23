@@ -718,6 +718,12 @@ export const darwinRouterAbi = [
         "internalType": "bool"
       },
       {
+        "name": "pool",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      },
+      {
         "name": "severity",
         "type": "uint8",
         "indexed": false,
