@@ -10,6 +10,10 @@ import {DarwinGuard} from "./DarwinGuard.sol";
 import {DarwinOracle} from "./DarwinOracle.sol";
 import {ISwapRouter02} from "./interfaces/External.sol";
 
+interface IStudioRegistry {
+    function isBasket(address) external view returns (bool);
+}
+
 /// @title DarwinRouter
 /// @notice Buy or sell a whole basket in one transaction, through Uniswap v3 on X Layer.
 ///
@@ -30,10 +34,33 @@ contract DarwinRouter is ReentrancyGuard {
     ISwapRouter02 public immutable swapRouter;
     address public immutable treasury;
     address public immutable quote;
+    /// The studio whose baskets this router trades (deployed right after the router: its address is
+    /// known in advance). Any other contract posing as a basket is refused.
+    IStudioRegistry public immutable studio;
+
+    /// Every buy and sell, on chain: X Layer's public RPCs only search logs 100 blocks at a time, so
+    /// the app reads history from here (and the transaction hash from the logs of that one block).
+    struct Trade {
+        address basket;
+        address trader;
+        address payToken;
+        bool isBuy;
+        uint64 blockNumber;
+        uint64 timestamp;
+        uint256 amount; // paid (buy) or received (sell), in the pay token
+        uint256 shares;
+    }
+
+    Trade[] internal trades;
+    mapping(address => uint256[]) internal tradesOfBasket;
+    mapping(address => uint256[]) internal tradesOfTrader;
 
     uint256 public constant FEE_BPS = 30; // 0.30% on buys and sells
     uint256 public constant CREATOR_SHARE_BPS = 3_333; // a third of the fee goes to the strategy's creator
     uint256 public constant BPS = 10_000;
+    /// A coin gets no allocation worth less than this (dust legs cannot be priced): its share goes
+    /// to the largest leg.
+    uint256 public constant MIN_LEG_USD = 0.01e18;
     /// The first buy of a basket locks $1 of shares at DEAD and must bring at least $5.
     uint256 public constant DEAD_SHARES = 1e18;
     uint256 public constant MIN_FIRST_BUY = 5e18;
@@ -68,13 +95,83 @@ contract DarwinRouter is ReentrancyGuard {
     error Slippage(uint256 got, uint256 min);
     error ZeroAmount();
     error UnknownPayToken(address token);
+    error NotABasket(address basket);
+    error MarketClosed(address coin);
 
-    constructor(DarwinGuard guard_, ISwapRouter02 swapRouter_, address treasury_) {
+    constructor(DarwinGuard guard_, ISwapRouter02 swapRouter_, address treasury_, IStudioRegistry studio_) {
         guard = guard_;
         oracle = guard_.oracle();
         swapRouter = swapRouter_;
         treasury = treasury_;
         quote = oracle.quote();
+        studio = studio_;
+    }
+
+    modifier onlyBasket(DarwinBasket basket) {
+        if (!studio.isBasket(address(basket))) revert NotABasket(address(basket));
+        _;
+    }
+
+    /// A coin the basket holds whose market is closed (zero if none). While one exists, nobody can
+    /// buy: the basket's value would use a price frozen since the market closed, and a buyer could
+    /// take the reopening gap from the holders. Selling waits too; redeeming in kind never does.
+    function closedHolding(DarwinBasket basket) public view returns (address) {
+        address[] memory coins = basket.coinList();
+        uint256[] memory b = basket.balances();
+        for (uint256 i; i < coins.length; i++) {
+            if (b[i] > 0 && !oracle.sessionOpen(coins[i])) return coins[i];
+        }
+        return address(0);
+    }
+
+    // ---- history ---------------------------------------------------------------------------------
+
+    function tradeCount() external view returns (uint256) {
+        return trades.length;
+    }
+
+    function trade(uint256 i) external view returns (Trade memory) {
+        return trades[i];
+    }
+
+    /// The last `n` trade indexes of a basket (or of a trader), newest first.
+    function recentOfBasket(address basket, uint256 n) external view returns (Trade[] memory, uint256[] memory) {
+        return _recent(tradesOfBasket[basket], n);
+    }
+
+    function recentOfTrader(address trader, uint256 n) external view returns (Trade[] memory, uint256[] memory) {
+        return _recent(tradesOfTrader[trader], n);
+    }
+
+    function recent(uint256 n) external view returns (Trade[] memory out, uint256[] memory ids) {
+        uint256 len = trades.length;
+        if (n > len) n = len;
+        out = new Trade[](n);
+        ids = new uint256[](n);
+        for (uint256 k; k < n; k++) {
+            ids[k] = len - 1 - k;
+            out[k] = trades[ids[k]];
+        }
+    }
+
+    function _recent(uint256[] storage list, uint256 n) internal view returns (Trade[] memory out, uint256[] memory ids) {
+        uint256 len = list.length;
+        if (n > len) n = len;
+        out = new Trade[](n);
+        ids = new uint256[](n);
+        for (uint256 k; k < n; k++) {
+            ids[k] = list[len - 1 - k];
+            out[k] = trades[ids[k]];
+        }
+    }
+
+    function _record(address basket, address trader, address payToken, bool isBuy, uint256 amount, uint256 shares)
+        internal
+    {
+        uint256 id = trades.length;
+        trades.push(Trade(basket, trader, payToken, isBuy, uint64(block.number), uint64(block.timestamp), amount, shares));
+        tradesOfBasket[basket].push(id);
+        tradesOfTrader[trader].push(id);
     }
 
     // ---- buy -------------------------------------------------------------------------------------
@@ -82,11 +179,14 @@ contract DarwinRouter is ReentrancyGuard {
     function buy(DarwinBasket basket, address payToken, uint256 amountIn, uint256 minShares, uint256 deadline, address to)
         external
         nonReentrant
+        onlyBasket(basket)
         returns (uint256 shares)
     {
         if (block.timestamp > deadline) revert Expired();
         if (amountIn == 0) revert ZeroAmount();
         if (!guard.buyOpen(address(basket))) revert BuyingClosed(address(basket));
+        address closed = closedHolding(basket);
+        if (closed != address(0)) revert MarketClosed(closed);
         IERC20(payToken).safeTransferFrom(msg.sender, address(this), amountIn);
 
         uint256 q = amountIn;
@@ -105,7 +205,7 @@ contract DarwinRouter is ReentrancyGuard {
             navBefore += before[i];
         }
         (uint256[] memory t,) = basket.targets();
-        uint256[] memory alloc = allocate(before, t, q, oracle.value(quote, q));
+        uint256[] memory alloc = allocate(before, t, q, oracle.value(quote, q), oracle.amountFor(quote, MIN_LEG_USD));
 
         uint256[] memory got = new uint256[](coins.length);
         for (uint256 i; i < coins.length; i++) {
@@ -131,6 +231,7 @@ contract DarwinRouter is ReentrancyGuard {
         }
         if (shares < minShares) revert Slippage(shares, minShares);
         basket.mint(to, shares);
+        _record(address(basket), to, payToken, true, amountIn, shares);
         emit Bought(address(basket), msg.sender, payToken, amountIn, shares, fee);
     }
 
@@ -168,6 +269,7 @@ contract DarwinRouter is ReentrancyGuard {
     function sell(DarwinBasket basket, uint256 shares, address payToken, uint256 minOut, uint256 deadline, address to)
         external
         nonReentrant
+        onlyBasket(basket)
         returns (uint256 out)
     {
         if (block.timestamp > deadline) revert Expired();
@@ -199,6 +301,7 @@ contract DarwinRouter is ReentrancyGuard {
         out = payToken == quote ? q : _leg(address(basket), payToken, true, q, 0, true, address(this));
         if (out < minOut) revert Slippage(out, minOut);
         IERC20(payToken).safeTransfer(to, out);
+        _record(address(basket), msg.sender, payToken, false, out, shares);
         emit Sold(address(basket), msg.sender, payToken, shares, out, fee);
     }
 
@@ -216,7 +319,7 @@ contract DarwinRouter is ReentrancyGuard {
 
     /// Split `q` quote units (worth `qUsd`) over the coins: first fill the coins under their target
     /// after the trade, in proportion to how far under they are; whatever is left follows the targets.
-    function allocate(uint256[] memory valuesUsd, uint256[] memory t, uint256 q, uint256 qUsd)
+    function allocate(uint256[] memory valuesUsd, uint256[] memory t, uint256 q, uint256 qUsd, uint256 minLeg)
         public
         pure
         returns (uint256[] memory alloc)
@@ -254,6 +357,17 @@ contract DarwinRouter is ReentrancyGuard {
         }
         if (given < q) alloc[last] += q - given; // rounding dust
         else if (given > q) alloc[last] -= given - q;
+        // legs too small to price go to the largest leg
+        uint256 big;
+        for (uint256 i; i < n; i++) {
+            if (alloc[i] > alloc[big]) big = i;
+        }
+        for (uint256 i; i < n; i++) {
+            if (i != big && alloc[i] > 0 && alloc[i] < minLeg) {
+                alloc[big] += alloc[i];
+                alloc[i] = 0;
+            }
+        }
     }
 
     // ---- legs ------------------------------------------------------------------------------------
