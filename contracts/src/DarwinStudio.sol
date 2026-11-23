@@ -20,13 +20,14 @@ import {ITapeoutProcessor} from "./interfaces/External.sol";
 /// creator then owns the strategy: they earn a third of its fees and can propose a new methodology
 /// behind the basket's 3-day timelock.
 ///
-/// The studio holds a stock of transistors for this, so a creator only pays the processor's
-/// tape-out fee (in OKB) and gas.
+/// The studio holds a stock of transistors for this: a creator pays the processor's tape-out fee
+/// and a small fee per gate (in OKB), plus gas.
 contract DarwinStudio is ERC1155Holder, IERC721Receiver, ReentrancyGuard {
     ITapeoutProcessor public immutable processor;
     DarwinGuard public immutable guard;
     DarwinOracle public immutable oracle;
     address public immutable router;
+    address public immutable treasury;
 
     uint256 public constant MAX_GATES = 400;
     uint8 public constant MAX_COINS = 8;
@@ -41,16 +42,15 @@ contract DarwinStudio is ERC1155Holder, IERC721Receiver, ReentrancyGuard {
 
     error BadCoins();
     error BadNetlist();
-    error BadWeights(uint256 index, uint8 weight);
-    error BadBand(uint8 band);
     error FeeTooLow(uint256 needed);
     error RefundFailed();
 
-    constructor(DarwinGuard guard_, address router_) {
+    constructor(DarwinGuard guard_, address router_, address treasury_) {
         guard = guard_;
         processor = guard_.processor();
         oracle = guard_.oracle();
         router = router_;
+        treasury = treasury_;
     }
 
     function basketCount() external view returns (uint256) {
@@ -61,9 +61,19 @@ contract DarwinStudio is ERC1155Holder, IERC721Receiver, ReentrancyGuard {
         return baskets;
     }
 
-    /// The OKB a creator must send: the processor's tape-out fee.
-    function launchFee() public view returns (uint256) {
-        return processor.TAPEOUT_FEE();
+    /// OKB per gate, paid to Darwin's treasury: the studio's transistors are a shared stock, and a
+    /// few dollars must not be enough to empty it.
+    uint256 public constant GATE_FEE = 0.00005 ether;
+
+    /// The OKB a creator must send for a netlist of `gates` gates: the processor's tape-out fee and
+    /// the gate fee.
+    function launchFee(uint256 gates) public view returns (uint256) {
+        return processor.TAPEOUT_FEE() + gates * GATE_FEE;
+    }
+
+    /// For a typical methodology (100 gates).
+    function launchFee() external view returns (uint256) {
+        return launchFee(100);
     }
 
     function createStrategy(string calldata name, string calldata symbol, address[] calldata coins, bytes calldata netlist)
@@ -81,11 +91,12 @@ contract DarwinStudio is ERC1155Holder, IERC721Receiver, ReentrancyGuard {
         for (uint256 k; k < netlist.length; k += 7) {
             if (netlist[k] != 0x00) revert BadNetlist();
         }
-        uint256 fee = launchFee();
+        uint256 fee = launchFee(netlist.length / 7);
         if (msg.value < fee) revert FeeTooLow(fee);
 
-        uint256 id = processor.tapeout{value: fee}(netlist, 4, 11);
-        _checkWeights(id, coins.length);
+        uint256 id = processor.tapeout{value: processor.TAPEOUT_FEE()}(netlist, 4, 11);
+        guard.checkWeights(id, coins.length);
+        _pay(treasury, fee - processor.TAPEOUT_FEE());
 
         basket = new DarwinBasket(name, symbol, msg.sender, msg.sender, router, guard, coins, id, keccak256(netlist));
         baskets.push(address(basket));
@@ -94,30 +105,13 @@ contract DarwinStudio is ERC1155Holder, IERC721Receiver, ReentrancyGuard {
         IERC721(address(processor)).safeTransferFrom(address(this), msg.sender, id);
         emit StrategyCreated(address(basket), msg.sender, id, name, symbol, coins);
 
-        if (msg.value > fee) {
-            (bool ok,) = msg.sender.call{value: msg.value - fee}("");
-            if (!ok) revert RefundFailed();
-        }
+        if (msg.value > fee) _pay(msg.sender, msg.value - fee);
     }
 
-    /// Evaluate the taped-out circuit on chain for every index: the listed coins must get weights
-    /// summing to 100 with one band in 1..15; any index beyond them must get nothing.
-    function _checkWeights(uint256 id, uint256 n) internal view {
-        uint256 sum;
-        uint8 band;
-        for (uint8 i; i < 8; i++) {
-            (uint8 w, uint8 b) = guard.methodology(id, i, true);
-            if (i < n) {
-                if (w == 0 || w > 100) revert BadWeights(i, w);
-                if (i == 0) band = b;
-                else if (b != band) revert BadBand(b);
-                sum += w;
-            } else if (w != 0) {
-                revert BadWeights(i, w);
-            }
-        }
-        if (sum != 100) revert BadWeights(type(uint256).max, uint8(sum > 255 ? 255 : sum));
-        if (band == 0 || band > 15) revert BadBand(band);
+    function _pay(address to, uint256 amount) internal {
+        if (amount == 0) return;
+        (bool ok,) = to.call{value: amount}("");
+        if (!ok) revert RefundFailed();
     }
 
     function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
