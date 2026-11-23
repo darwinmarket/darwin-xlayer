@@ -11,6 +11,7 @@ hackathon.
 
 - [The baskets](#the-baskets)
 - [How a trade works](#how-a-trade-works)
+- [Stocks on weekends](#stocks-on-weekends)
 - [TapeOut, load-bearing](#tapeout-load-bearing)
 - [Design your own strategy](#design-your-own-strategy)
 - [Measured on X Layer](#measured-on-x-layer)
@@ -45,21 +46,49 @@ Chainlink. Anyone can launch more from the [studio](#design-your-own-strategy).
 4. Each coin is bought along its Uniswap v3 route: directly against USDG, or through USDC (Nasdaq,
    Tesla, Apple), xBTC (Circle, MicroStrategy) or the S&P 500 token (Alphabet). The coins land in
    the basket.
-5. **The trade-policy circuit judges every leg** with its real execution price, the oracle's age,
-   the sequencer, the market session and the basket's weights after the trade. One refusal reverts
-   everything.
+5. **The trade-policy circuit judges every leg** with its real execution price, the price's age,
+   the sequencer, the market session, where the price comes from (Chainlink or the stock's own pool)
+   and the basket's weights after the trade. One refusal reverts everything.
 6. Shares are minted at the lower of what the coins are worth and what you paid: existing holders
    can never lose to a buyer.
 
 **Sell:** your shares are redeemed in kind, every coin is sold along its route, judged the same
 way, and you receive USDG, USDC or USD₮0.
 
-**Stocks keep market hours:** while a basket holds a stock outside the US session (weekends), nobody
-can buy into it, because its value would use Friday's price and a buyer could take Monday's gap
-from the holders. Crypto baskets trade around the clock.
-
 **Redeem in kind:** always open. No oracle, no circuit, no router: you burn shares and receive your
 share of every coin and stock.
+
+## Stocks on weekends
+
+Chainlink's xStocks feeds follow the US equities session: they stop around Saturday 01:00 UTC and
+resume from Monday 01:00 UTC (some only an hour later). The xStocks pools on X Layer do not stop:
+they keep trading all weekend against 24/7 venues. We measured it on chain over the weekend of
+2026-11-21 — every pool kept moving, and on Sunday night the pools were closer to Monday's first
+Chainlink price than Friday's last one was, for every stock:
+
+| Stock | Friday's last Chainlink price vs Monday | Sunday 23:00 pool price vs Monday |
+|---|---|---|
+| NVIDIA | −1.84% | +1.42% |
+| S&P 500 | −1.12% | −0.64% |
+| Nasdaq 100 | −1.41% | −0.31% |
+| Tesla | −1.94% | +0.23% |
+| SpaceX | −0.65% | +0.36% |
+| Apple | −1.30% | −0.17% |
+
+So when a stock's Chainlink price is frozen (weekend, holiday, the first hour of Monday), Darwin
+prices it with **its own pool's one-hour TWAP**, and stock baskets keep trading. Only if:
+
+- the pool's price moved within the last 6 hours (a quiet pool is as frozen as the feed);
+- the pool has an hour of history;
+- the one-hour TWAP is within 10% of the last Chainlink price;
+- the pool's spot price is within 1% of the TWAP (a pool being pushed right now loses its price);
+- its pair is priced too (Alphabet trades against the S&P 500 token).
+
+The trade-policy circuit is told the price is the pool's (its `pool` input) and holds those legs to
+1.5% on a buy and 2% on a sell instead of 2% and 3%. If a stock fails any condition it has no live
+price: it gets no new money, and while a basket holds it nobody can buy into the basket (its value
+would be stale and a buyer could take the reopening gap from the holders). Redeeming in kind stays
+open. Crypto trades around the clock on Chainlink.
 
 ## TapeOut, load-bearing
 
@@ -69,7 +98,7 @@ tables: [docs/CIRCUITS.md](docs/CIRCUITS.md).
 
 | Circuit | Decides | Size |
 |---|---|---|
-| Trade policy | whether each leg of a trade goes through, and how severe a refusal is | 14 inputs, 105 gates |
+| Trade policy | whether each leg of a trade goes through, and how severe a refusal is, with tighter limits for a stock priced by its own pool | 15 inputs, 147 gates |
 | Market-risk breaker | whether a basket accepts buys (stateful: trips at once, reopens only after 8 healthy beats over at least 1 h 45 min) | 4 LATCH, 57 gates |
 | Methodology (one per basket) | each coin's target weight and the band, given whether the coin is eligible | 61 to 146 gates |
 
@@ -77,9 +106,9 @@ What makes it more than a checkbox:
 
 - **The circuits compute, they do not rubber-stamp.** Quantised prices, ages, drifts and sessions
   go in; verdicts with a severity, target weights and a breaker state come out.
-- **Stocks have sessions.** On a weekend a stock leg is *closed*, not *broken*: the breaker does not
-  trip, and a basket holding stocks and crypto buys only its crypto until Monday, then rebalances
-  with the next buys.
+- **Stocks have sessions.** On a weekend a stock is priced by its pool and the circuit knows it
+  (stricter limits); a stock without a trustworthy pool price is *closed*, not *broken*: the breaker
+  does not trip, and it simply gets no new money until it has a price again.
 - **Pinned and fail-closed.** Netlist hashes are checked at deployment; the processor's
   implementation is checked before every call. If TapeOut upgrades, Darwin stops instead of trusting
   new code.
@@ -119,12 +148,16 @@ A full round trip (buy then sell Frontier, 1,000 USD) keeps 99.29 USD of every 1
 
 ```
 circuits   13 tests   every truth table in full, checked against the TAP-02 Python reference
-contracts  59 tests   on a fork of X Layer mainnet, plus 3 invariants (540 random trades)
+           + an on-chain sweep: all 32,768 policy inputs evaluated by the TapeOut processor, 0 mismatches
+contracts  66 tests   on forks of X Layer mainnet (a Friday and a Sunday), plus 3 invariants (540 random trades)
+app         8 tests   Playwright on a local fork: buy, sell, redeem, proofs, studio, weekend trading
 ```
 
 - Buys and sells of every basket from 10 to 10,000 USD, with USDG, USDC and USD₮0.
 - Manipulated pools refused, sequencer outage, stale feeds, breaker trip and recovery.
-- A Sunday block: stocks closed, no breaker trip, mixed baskets buy their open markets.
+- A Sunday block: stocks priced by their pools, a stock basket bought and sold, prices that moved
+  since Friday; pushed pools, pools held more than 10% off for an hour and quiet pools lose their
+  price; Monday's first hour; no breaker trip.
 - The studio: launches, refusals of bad circuits, creator fees.
 - Processor upgrade and wrong circuits fail closed.
 
