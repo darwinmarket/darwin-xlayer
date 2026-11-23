@@ -6,7 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {DarwinOracle} from "../src/DarwinOracle.sol";
 import {DarwinGuard} from "../src/DarwinGuard.sol";
-import {DarwinRouter} from "../src/DarwinRouter.sol";
+import {DarwinRouter, IStudioRegistry} from "../src/DarwinRouter.sol";
 import {DarwinStudio} from "../src/DarwinStudio.sol";
 import {DarwinBasket} from "../src/DarwinBasket.sol";
 import {XLayer} from "./XLayer.sol";
@@ -64,8 +64,12 @@ contract Deploy is Script {
             breakerId,
             _hash("darwin-breaker")
         );
-        DarwinRouter router = new DarwinRouter(guard, ISwapRouter02(XLayer.SWAP_ROUTER), treasury);
-        DarwinStudio studio = new DarwinStudio(guard, address(router));
+        // the router only trades the studio's baskets: the studio is the next contract we create
+        address studioAt = vm.computeCreateAddress(deployer, vm.getNonce(deployer) + 1);
+        DarwinRouter router =
+            new DarwinRouter(guard, ISwapRouter02(XLayer.SWAP_ROUTER), treasury, IStudioRegistry(studioAt));
+        DarwinStudio studio = new DarwinStudio(guard, address(router), treasury);
+        require(address(studio) == studioAt, "studio address");
         IERC1155(processor.transistors()).safeTransferFrom(deployer, address(studio), 0, 10_000, "");
 
         // longer price histories on the pools whose TWAP window is short (skipped on a local fork,
@@ -81,7 +85,8 @@ contract Deploy is Script {
         address[] memory baskets = new address[](s.length);
         for (uint256 i; i < s.length; i++) {
             bytes memory nl = vm.parseJsonBytes(_json(s[i].circuit), ".netlist");
-            baskets[i] = address(studio.createStrategy{value: studio.launchFee()}(s[i].name, s[i].symbol, s[i].coins, nl));
+            baskets[i] =
+                address(studio.createStrategy{value: studio.launchFee(nl.length / 7)}(s[i].name, s[i].symbol, s[i].coins, nl));
         }
         vm.stopBroadcast();
 
