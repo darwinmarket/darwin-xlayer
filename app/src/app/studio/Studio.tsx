@@ -50,9 +50,6 @@ function Inner() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [launched, setLaunched] = useState<{ basket: Address; circuitId: bigint; hash: Hash } | null>(null);
-  const fee = useQuery(DEPLOYMENT ? "studio:fee" : null, () =>
-    publicClient.readContract({ address: DEPLOYMENT!.studio, abi: darwinStudioAbi, functionName: "launchFee" }),
-  );
 
   const markets = mq.data;
   const byAddr = markets?.byAddress;
@@ -98,6 +95,11 @@ function Inner() {
       return { circuit: null, hex: null, hash: null, bytes: 0, error: (e as Error).message };
     }
   }, [spec]);
+  // the launch fee depends on the circuit's size (tape-out fee + a fee per gate)
+  const gates = built?.circuit?.gates ?? 0;
+  const fee = useQuery(DEPLOYMENT && gates ? `studio:fee:${gates}` : null, () =>
+    publicClient.readContract({ address: DEPLOYMENT!.studio, abi: darwinStudioAbi, functionName: "launchFee", args: [BigInt(gates)] }),
+  );
   const table = useMemo(() => {
     if (!built?.circuit || !spec) return [];
     const rows = [];
@@ -113,7 +115,6 @@ function Inner() {
     return rows;
   }, [built, spec]);
 
-  const gates = built?.circuit?.gates ?? 0;
   const perEval = CALL_GAS + GATE_GAS * gates;
   const perBuy = perEval * selected.length;
   const okb = markets?.list.find((m) => m.symbol === "WOKB")?.priceUsd ?? 0;
@@ -368,7 +369,7 @@ function Inner() {
             </li>
           </ul>
           <dl className="kv small">
-            <dt>Launch fee (processor tape-out fee)</dt>
+            <dt>Launch fee (tape-out fee + {gates} gates)</dt>
             <dd>{fee.data !== undefined ? `${formatEther(fee.data)} OKB` : "…"}</dd>
           </dl>
           {!w.account ? (
