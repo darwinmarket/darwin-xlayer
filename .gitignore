@@ -11,3 +11,6 @@ app/.vercel/
 .DS_Store
 *.log
 *.tsbuildinfo
+contracts/broadcast/
+deployments/local.json
+deployments/dev.json
