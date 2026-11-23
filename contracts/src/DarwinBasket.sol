@@ -154,6 +154,7 @@ contract DarwinBasket is ERC20, Ownable2Step, ReentrancyGuard {
 
     function proposeMethodology(uint256 id, bytes32 hash) external onlyOwner {
         guard.checkMethodology(id, hash);
+        guard.checkWeights(id, coins.length);
         pendingId = id;
         pendingHash = hash;
         pendingEta = block.timestamp + TIMELOCK;
@@ -165,6 +166,7 @@ contract DarwinBasket is ERC20, Ownable2Step, ReentrancyGuard {
         if (pendingEta == 0) revert NoPending();
         if (block.timestamp < pendingEta) revert TimelockActive(pendingEta);
         guard.checkMethodology(pendingId, pendingHash);
+        guard.checkWeights(pendingId, coins.length);
         methodologyId = pendingId;
         methodologyHash = pendingHash;
         pendingEta = 0;
