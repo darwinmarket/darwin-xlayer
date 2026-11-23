@@ -76,13 +76,20 @@ Chainlink price than Friday's last one was, for every stock:
 | Apple | −1.30% | −0.17% |
 
 So when a stock's Chainlink price is frozen (weekend, holiday, the first hour of Monday), Darwin
-prices it with **its own pool's one-hour TWAP**, and stock baskets keep trading. Only if:
+prices it at **its own pool's current price**, the price a trade gets right now, and stock baskets
+keep trading. Only if:
 
+- the spot price is within 1% of the pool's one-hour TWAP;
+- that TWAP is within 10% of the last Chainlink price;
 - the pool's price moved within the last 6 hours (a quiet pool is as frozen as the feed);
 - the pool has an hour of history;
-- the one-hour TWAP is within 10% of the last Chainlink price;
-- the pool's spot price is within 1% of the TWAP (a pool being pushed right now loses its price);
 - its pair is priced too (Alphabet trades against the S&P 500 token).
+
+The 1% band is what makes the spot safe. One flash loan can move a pool's spot, never its hour's
+average: pushed further than 1%, the stock loses its price instead of moving it. Pushed just inside
+the band, the attack does not pay: on the Sunday fork, pushing NVIDIA 1.16% down, buying Frontier
+and pushing it back loses 43 USD on a 1,000 USD buy, 84 on 10,000, 185 on 25,000, and at 50,000 the
+circuit refuses the trade (`test_pushingInsideTheBandDoesNotPay`).
 
 The trade-policy circuit is told the price is the pool's (its `pool` input) and holds those legs to
 1.5% on a buy and 2% on a sell instead of 2% and 3%. If a stock fails any condition it has no live
@@ -149,14 +156,14 @@ A full round trip (buy then sell Frontier, 1,000 USD) keeps 99.29 USD of every 1
 ```
 circuits   13 tests   every truth table in full, checked against the TAP-02 Python reference
            + an on-chain sweep: all 32,768 policy inputs evaluated by the TapeOut processor, 0 mismatches
-contracts  66 tests   on forks of X Layer mainnet (a Friday and a Sunday), plus 3 invariants (540 random trades)
+contracts  69 tests   on forks of X Layer mainnet (a Friday and a Sunday), plus 3 invariants (540 random trades)
 app         8 tests   Playwright on a local fork: buy, sell, redeem, proofs, studio, weekend trading
 ```
 
 - Buys and sells of every basket from 10 to 10,000 USD, with USDG, USDC and USD₮0.
 - Manipulated pools refused, sequencer outage, stale feeds, breaker trip and recovery.
-- A Sunday block: stocks priced by their pools, a stock basket bought and sold, prices that moved
-  since Friday; pushed pools, pools held more than 10% off for an hour and quiet pools lose their
+- A Sunday block: stocks priced at their pools' spot, the price following the last trade, a stock
+  basket bought and sold, prices that moved since Friday, a push inside the 1% band that loses money; pushed pools, pools held more than 10% off for an hour and quiet pools lose their
   price; Monday's first hour; no breaker trip.
 - The studio: launches, refusals of bad circuits, creator fees.
 - Processor upgrade and wrong circuits fail closed.

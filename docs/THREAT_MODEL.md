@@ -17,7 +17,7 @@ What Darwin on X Layer protects, against whom, and what it does not cover.
 | Router | mint shares after handing the coins in | redeem other people's shares |
 | TapeOut processor | evaluate circuits | change a circuit Darwin pinned without every call failing |
 | Chainlink | price coins (stocks: in session) | price a buy outside 2% of the pool, which the circuit refuses |
-| xStocks pools | price a stock while its feed rests (1-hour TWAP) | move it more than 10% from the last Chainlink price, or price it while being pushed (spot more than 1% off the TWAP) |
+| xStocks pools | price a stock while its feed rests (spot price, within 1% of the 1-hour TWAP) | move its TWAP more than 10% from the last Chainlink price, or push its spot more than 1% off the TWAP (the stock then has no price) |
 | Anyone | buy, sell, redeem in kind, beat a breaker, launch a strategy | reopen a tripped breaker faster than 8 healthy beats over 1 h 45 min |
 
 There is no admin key over funds, no pause on exits, no upgradeable Darwin contract.
@@ -37,8 +37,8 @@ There is no admin key over funds, no pause on exits, no upgradeable Darwin contr
 | Sequencer outage on X Layer | Chainlink's uptime feed: no buy while down or within an hour of a restart | `test_sequencerDownClosesBuying` |
 | A wrapped asset loses its backing | xBTC/BTC exchange rate below 0.995 trips the breaker | `DarwinGuard.facts` |
 | A dead feed traps holders | redeeming in kind needs no oracle, no circuit, no router | `test_staleFeedTripsTheBreakerButExitsStayOpen` |
-| US stock market closed | stocks are priced by their own pool's 1-hour TWAP (the pools trade all weekend); a stock without a trustworthy pool price takes no money and a basket holding it takes no buy (no one takes the reopening gap from holders); redeeming in kind stays open; no breaker trip | `WeekendTest`, `test_noBuyWhileAHeldStockIsClosed` |
-| Push a stock pool on a weekend to misprice a basket | the price is a 1-hour TWAP; a spot more than 1% off it removes the price; it may not leave 10% of the last Chainlink price; the pool must have moved within 6 h; the circuit holds pool-priced legs to 1.5%/2% | `test_aPushedPoolLosesItsPrice`, `test_aPoolHeldFarOffForAnHourHasNoPrice`, `test_aQuietPoolHasNoPrice` |
+| US stock market closed | stocks are priced at their own pool's spot, within 1% of its 1-hour TWAP (the pools trade all weekend); a stock without a trustworthy pool price takes no money and a basket holding it takes no buy (no one takes the reopening gap from holders); redeeming in kind stays open; no breaker trip | `WeekendTest`, `test_noBuyWhileAHeldStockIsClosed` |
+| Push a stock pool on a weekend to misprice a basket | the price is the spot, accepted only within 1% of the 1-hour TWAP: a bigger push removes the price, a push inside the band costs more than it gains (measured: −43 USD on 1k, −84 on 10k, −185 on 25k, refused at 50k); the TWAP may not leave 10% of the last Chainlink price; the pool must have moved within 6 h; the circuit holds pool-priced legs to 1.5%/2% | `test_pushingInsideTheBandDoesNotPay`, `test_aPushedPoolLosesItsPrice`, `test_aPoolHeldFarOffForAnHourHasNoPrice`, `test_aQuietPoolHasNoPrice` |
 | Equity feeds wake up late on Monday | between 01:00 and the first answer, stocks are priced by their pools and no breaker trips | `test_mondaysFirstHour` |
 | A contract posing as a basket | the router only trades baskets launched by its studio | `test_fakeBasketIsRefused` |
 | Chainlink's daily feeds land seconds late | 24 h heartbeats get 15 minutes of margin, so nobody can trip every breaker in those seconds | `test_lateDailyFeedDoesNotTripTheBreaker` |
@@ -70,7 +70,7 @@ have not answered yet. The new policy circuit was swept again on the real TapeOu
 - **Chainlink.** A wrong answer within 2% of the pool would pass. Both would have to be wrong.
 - **A pool held off its market for an hour.** On a weekend, someone holding a stock's pool off its
   true price for a full hour, against every arbitrageur, moves its TWAP; the price stays within 10%
-  of the last Chainlink price and within 1% of the pool's own spot. The cost of holding a ~$1M pool
+  of the last Chainlink price, and the spot it prices at may sit 1% beyond it. The cost of holding a ~$1M pool
   off for an hour is expected to exceed what that buys; we did not measure arbitrage speed.
 - **Uniswap liquidity.** Large trades cost more; the policy refuses them when the cost exceeds 2%.
 - **Holidays.** The session calendar knows weekends, not exchange holidays; on a holiday the equity

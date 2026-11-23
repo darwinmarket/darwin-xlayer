@@ -5,7 +5,7 @@ than 150 user wallets. This repository is its port to X Layer for the **X Layer 
 hackathon (OKX Build X series, deadline **2026-12-07 23:59 UTC**), with TapeOut circuits deciding
 what a basket is allowed to do.
 
-Status (2026-11-23): circuits, contracts, studio, deploy scripts and web app built and audited; weekend pricing added (stocks priced by their own pools while Chainlink's equity feeds rest). 13 circuit tests plus an on-chain sweep of all 32,768 policy inputs, 66 mainnet-fork tests (a Friday and a Sunday block) and 3 invariants, 8 Playwright tests on local forks. Next: mainnet deployment.
+Status (2026-11-23): circuits, contracts, studio, deploy scripts and web app built and audited; weekend pricing added (stocks priced at their own pool's spot, within 1% of its hour, while Chainlink's equity feeds rest). 13 circuit tests plus an on-chain sweep of all 32,768 policy inputs, 69 mainnet-fork tests (a Friday and a Sunday block) and 3 invariants, 8 Playwright tests on local forks. Next: mainnet deployment.
 
 ## 1. The hackathon in one screen
 
@@ -132,8 +132,10 @@ Measured on chain over the weekend of 2026-11-21: Chainlink's xStocks feeds stop
 UTC and resume from Monday 01:00 (NVIDIA, SpaceX and S&P 500 only near 02:00), but every xStocks
 pool on X Layer kept trading, and on Sunday night each pool was closer to Monday's first Chainlink
 price than Friday's last answer (Tesla +0.23% vs −1.94%, Nasdaq −0.31% vs −1.41%). So a stock whose
-feed is frozen is priced by its pool's one-hour TWAP, when the pool moved within 6 h, has an hour of
-history, stays within 10% of the last Chainlink price, and its spot within 1% of the TWAP. The
+feed is frozen is priced at its pool's spot price (what a trade gets right now), when that spot is
+within 1% of the pool's one-hour TWAP, the TWAP within 10% of the last Chainlink price, the pool
+moved within 6 h and has an hour of history. A flash push inside the 1% band was measured to lose
+money at every size. The
 policy circuit gets a `pool` bit and applies 1.5%/2% instead of 2%/3%. Side fix: the breaker no
 longer trips on stock baskets in Monday's first hour, when the session is open but some feeds have
 not answered yet.

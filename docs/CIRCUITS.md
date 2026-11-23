@@ -34,7 +34,7 @@ Called once per coin of every buy and sell.
 | 8-11 | `drift`: weight after the trade vs target, in pp | `DarwinRouter._judgeBuy` |
 | 12 | `better`: the trade does not move the coin away from its target | `DarwinRouter._judgeBuy` |
 | 13 | `open`: the coin's market is in session (US stocks: 24/5) | `DarwinOracle.sessionOpen` |
-| 14 | `pool`: a stock priced by its own pool's one-hour TWAP, its Chainlink feed being frozen | `DarwinOracle.poolPriced` |
+| 14 | `pool`: a stock priced by its own pool's spot price (within 1% of its one-hour TWAP), its Chainlink feed being frozen | `DarwinOracle.poolPriced` |
 
 Outputs: `allow`, and a 2-bit severity: 0 clean, 1 allowed with a warning, 2 refused, 3 refused
 because the market itself is broken.
