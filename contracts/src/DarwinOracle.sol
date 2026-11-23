@@ -7,7 +7,9 @@ import {IAggregator, IUniswapV3Pool} from "./interfaces/External.sol";
 /// @title DarwinOracle
 /// @notice Every market Darwin can put in a basket, crypto and tokenized stocks (xStocks), with
 /// the facts Darwin's circuits read: Chainlink prices and their age, trading sessions, the L2
-/// sequencer, pegs, reserves, and Uniswap v3 spot and 30-minute TWAP prices.
+/// sequencer, pegs, reserves, and Uniswap v3 spot and TWAP prices.
+/// Tokenized stocks trade on Uniswap around the clock while their Chainlink feeds follow the US
+/// session: when a stock's feed is frozen, its pool's one-hour TWAP prices it, within bounds.
 /// Configured once at deployment, no admin: a new market list means a new oracle.
 contract DarwinOracle {
     /// Always open (crypto, stablecoins).
@@ -126,15 +128,36 @@ contract DarwinOracle {
         }
     }
 
-    // ---- Chainlink -------------------------------------------------------------------------------
+    // ---- prices ----------------------------------------------------------------------------------
 
-    /// USD price of one whole token, 18 decimals, and the time of the answer.
+    /// USD price of one whole token, 18 decimals, and the time it reflects.
+    ///
+    /// Chainlink, except for a tokenized stock whose market is closed (a weekend) or whose feed is
+    /// past its heartbeat (the hour after Monday's open, a holiday): its Chainlink price is then
+    /// frozen while its Uniswap pool keeps trading, so the stock is priced by its pool instead, if
+    /// the pool can be trusted (see `poolPriced`). The time is then the pool's last trade.
     function price(address token) public view returns (uint256 usd, uint256 updatedAt) {
         Market memory m = market(token);
-        (, int256 answer,, uint256 at,) = m.feed.latestRoundData();
-        if (answer <= 0 || at == 0 || at > block.timestamp) revert BadPrice(token);
-        usd = uint256(answer) * 10 ** (18 - m.feed.decimals());
-        updatedAt = at;
+        if (_poolMode(m)) {
+            (bool ok, uint256 p) = _poolPrice(m);
+            if (ok) return (p, _lastTrade(m));
+        }
+        bool fine;
+        (fine, usd, updatedAt) = _feed(m);
+        if (!fine) revert BadPrice(token);
+    }
+
+    /// The token's Chainlink answer, whatever the session (18 decimals).
+    function chainlinkPrice(address token) external view returns (uint256 usd, uint256 updatedAt) {
+        bool fine;
+        (fine, usd, updatedAt) = _feed(market(token));
+        if (!fine) revert BadPrice(token);
+    }
+
+    function _feed(Market memory m) internal view returns (bool ok, uint256 usd, uint256 at) {
+        (, int256 answer,, uint256 t,) = m.feed.latestRoundData();
+        if (answer <= 0 || t == 0 || t > block.timestamp) return (false, 0, 0);
+        return (true, uint256(answer) * 10 ** (18 - m.feed.decimals()), t);
     }
 
     /// USD value (18 decimals) of `amount` base units of `token`.
@@ -149,21 +172,111 @@ contract DarwinOracle {
         return Math.mulDiv(usd, 10 ** market(token).decimals, p);
     }
 
-    /// 0: under an hour old, 1: within the heartbeat, 2: within heartbeat + grace, 3: stale.
+    /// Age of the price `price` returns. 0: under an hour, 1: within the heartbeat, 2: within
+    /// heartbeat + grace, 3: older. For a pool-priced stock, the age of the pool's last trade.
     function ageClass(address token) public view returns (uint8) {
         Market memory m = market(token);
-        (,,, uint256 at,) = m.feed.latestRoundData();
-        if (at == 0 || at > block.timestamp) return 3;
-        uint256 age = block.timestamp - at;
+        uint256 at;
+        if (_poolMode(m) && poolPriced(token)) {
+            at = _lastTrade(m);
+        } else {
+            bool fine;
+            (fine,, at) = _feed(m);
+            if (!fine) return 3;
+        }
+        return _ageClass(block.timestamp - at, m.heartbeat);
+    }
+
+    function _ageClass(uint256 age, uint256 heartbeat) internal pure returns (uint8) {
         if (age < FRESH) return 0;
-        if (age <= m.heartbeat) return 1;
-        if (age <= uint256(m.heartbeat) + GRACE) return 2;
+        if (age <= heartbeat) return 1;
+        if (age <= heartbeat + GRACE) return 2;
         return 3;
+    }
+
+    // ---- stocks priced by their pool -------------------------------------------------------------
+
+    /// The pool's time-weighted average over this window prices a stock while its feed rests.
+    uint32 public constant POOL_WINDOW = 1 hours;
+    /// It must stay within 10% of the stock's last Chainlink price (a weekend moves a few percent),
+    uint256 public constant POOL_ANCHOR_BPS = 1_000;
+    /// and the pool's spot price within 1% of it (a pool being pushed right now is not trusted).
+    uint256 public constant POOL_SPOT_BPS = 100;
+
+    /// A stock whose Chainlink price is frozen: market closed, or feed past its heartbeat.
+    function _poolMode(Market memory m) internal view returns (bool) {
+        if (m.session == SESSION_ALWAYS) return false;
+        if (!isOpen(m.session, block.timestamp)) return true;
+        (bool fine,, uint256 at) = _feed(m);
+        return !fine || block.timestamp - at > m.heartbeat;
+    }
+
+    /// Whether `token` is priced by its pool now: a stock whose Chainlink price is frozen, whose
+    /// pool traded within the stock's heartbeat (a quiet pool is as frozen as the feed), has an
+    /// hour of history, a time-weighted price within 10% of the last Chainlink price, a spot price
+    /// within 1% of that, and a pair that is priced too.
+    /// Moving that price means holding a pool off the market for an hour against every arbitrageur
+    /// (the xStocks pools trade around the clock against 24/7 venues), and by 10% at most.
+    function poolPriced(address token) public view returns (bool ok) {
+        Market memory m = markets[token];
+        if (m.token == address(0) || !_poolMode(m)) return false;
+        (ok,) = _poolPrice(m);
+    }
+
+    function _poolPrice(Market memory m) internal view returns (bool, uint256) {
+        if (block.timestamp - _lastTrade(m) > m.heartbeat) return (false, 0);
+        // the pair must have a live price: the quote, an always-open market, or a pool-priced stock
+        if (m.pair != quote) {
+            Market memory p = markets[m.pair];
+            if (_poolMode(p) && !poolPriced(m.pair)) return (false, 0);
+        }
+        uint32[] memory ago = new uint32[](2);
+        ago[0] = POOL_WINDOW;
+        int24 tick;
+        try m.pool.observe(ago) returns (int56[] memory cum, uint160[] memory) {
+            int56 delta = cum[1] - cum[0];
+            int56 w = int56(uint56(POOL_WINDOW));
+            tick = int24(delta / w);
+            if (delta < 0 && delta % w != 0) tick--;
+        } catch {
+            return (false, 0); // under an hour of history
+        }
+        uint256 tw = _toUsd(m, priceX128AtTick(tick));
+        (bool fine, uint256 last,) = _feed(m);
+        if (!fine || _bps(tw, last) > POOL_ANCHOR_BPS) return (false, 0);
+        (uint160 sqrtP,,,,,,) = m.pool.slot0();
+        if (_bps(_toUsd(m, Math.mulDiv(sqrtP, sqrtP, 1 << 64)), tw) > POOL_SPOT_BPS) return (false, 0);
+        return (true, tw);
+    }
+
+    /// When the pool's price last moved (its newest observation: Uniswap writes one when a trade
+    /// moves the tick).
+    function _lastTrade(Market memory m) internal view returns (uint256) {
+        (,, uint16 index,,,,) = m.pool.slot0();
+        (uint32 ts,,,) = m.pool.observations(index);
+        return ts;
+    }
+
+    /// |a - b| / b in basis points.
+    function _bps(uint256 a, uint256 b) internal pure returns (uint256) {
+        return (a > b ? a - b : b - a) * 10_000 / b;
     }
 
     /// Whether the token's market is in session now.
     function sessionOpen(address token) public view returns (bool) {
         return isOpen(market(token).session, block.timestamp);
+    }
+
+    /// Whether the token has a live price now: in session with Chainlink, or priced by its pool.
+    function tradable(address token) public view returns (bool) {
+        Market memory m = market(token);
+        if (!_poolMode(m)) return true;
+        return poolPriced(token);
+    }
+
+    /// Always open (crypto, stablecoins) or not (stocks).
+    function isStock(address token) external view returns (bool) {
+        return market(token).session != SESSION_ALWAYS;
     }
 
     function isOpen(uint8 session, uint256 t) public pure returns (bool) {
@@ -196,7 +309,8 @@ contract DarwinOracle {
 
     /// The quote stablecoin is within 1% of $1 by its own Chainlink feed.
     function quotePegOk() public view returns (bool) {
-        (uint256 p,) = price(quote);
+        (bool fine, uint256 p,) = _feed(markets[quote]);
+        if (!fine) return false;
         return p >= 1e18 - PEG_BAND && p <= 1e18 + PEG_BAND;
     }
 
@@ -242,6 +356,7 @@ contract DarwinOracle {
     function _usd(address token) internal view returns (uint256 usd) {
         (usd,) = price(token);
     }
+
 
     /// USD per whole token from a pool price (token1 base units per token0 base unit, Q128).
     function _toUsd(Market memory m, uint256 priceX128) internal view returns (uint256) {
