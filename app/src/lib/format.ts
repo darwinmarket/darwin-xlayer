@@ -74,6 +74,10 @@ export function errorText(e: unknown): string {
   }
   const s = any?.shortMessage || any?.message || String(e);
   if (/User rejected|denied/i.test(s)) return "Request rejected in the wallet.";
+  // Uniswap's own minimum-out check: the router sets it from the oracle, so a route more than 2%
+  // (buys) or 3% (sells) from its price stops there, before the circuit even sees it
+  if (/Too little received/i.test(s))
+    return "A pool on this basket's routes is too far from its oracle price right now (more than 2% on a buy, 3% on a sell): the swap stopped to protect you. Try again in a few minutes, or a smaller amount.";
   return s.split("\n")[0].slice(0, 220);
 }
 
@@ -93,7 +97,7 @@ export const severityLabel = (s: number) => SEVERITY[s] ?? `severity ${s}`;
 const KNOWN_ERRORS: Record<string, (args: readonly unknown[]) => string> = {
   BuyingClosed: () => "Buying is closed for this basket: its breaker is tripped. Selling and redeeming stay open.",
   MarketClosed: () =>
-    "A stock in this basket is outside its trading session: buying and selling wait for the US session (Monday 01:00 UTC). Redeeming in kind stays open.",
+    "A stock in this basket has no live price right now (US market closed and its pool not trading steadily near its last price): buying waits. Redeeming in kind stays open.",
   NotABasket: () => "This address is not a basket launched by Darwin's studio.",
   TooManyGates: () => "The methodology circuit is too large (at most 400 gates).",
   Refused: (a) =>
