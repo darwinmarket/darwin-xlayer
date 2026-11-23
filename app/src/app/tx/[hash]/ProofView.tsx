@@ -116,7 +116,8 @@ function Inner({ hash }: { hash: Hash }) {
               : "Mismatch: a re-evaluation disagrees with the recorded verdict."}
           </strong>{" "}
           Each leg&apos;s inputs were re-run through the trade-policy circuit #{d.policyCircuit.toString()} twice: in this browser, on the netlist read from
-          the processor, and on chain with processor.eval(). Both agree with the verdict the router emitted.
+          the processor, and on chain with processor.eval().{" "}
+          {allMatch ? "Both agree with the verdict the router emitted." : "See the rows marked in red below."}
         </div>
       )}
 
