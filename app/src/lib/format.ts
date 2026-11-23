@@ -92,6 +92,10 @@ export const severityLabel = (s: number) => SEVERITY[s] ?? `severity ${s}`;
 
 const KNOWN_ERRORS: Record<string, (args: readonly unknown[]) => string> = {
   BuyingClosed: () => "Buying is closed for this basket: its breaker is tripped. Selling and redeeming stay open.",
+  MarketClosed: () =>
+    "A stock in this basket is outside its trading session: buying and selling wait for the US session (Monday 01:00 UTC). Redeeming in kind stays open.",
+  NotABasket: () => "This address is not a basket launched by Darwin's studio.",
+  TooManyGates: () => "The methodology circuit is too large (at most 400 gates).",
   Refused: (a) =>
     `The TapeOut trade-policy circuit refused a leg (${severityLabel(Number(a[1]))}, price deviation ${Number(a[2]) * 0.25}%, drift ${a[3]} pp).`,
   Slippage: (a) => `Price moved beyond your slippage limit (got ${a[0]}, minimum ${a[1]}).`,
