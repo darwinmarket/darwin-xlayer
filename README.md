@@ -54,6 +54,10 @@ Chainlink. Anyone can launch more from the [studio](#design-your-own-strategy).
 **Sell:** your shares are redeemed in kind, every coin is sold along its route, judged the same
 way, and you receive USDG, USDC or USD₮0.
 
+**Stocks keep market hours:** while a basket holds a stock outside the US session (weekends), nobody
+can buy into it, because its value would use Friday's price and a buyer could take Monday's gap
+from the holders. Crypto baskets trade around the clock.
+
 **Redeem in kind:** always open. No oracle, no circuit, no router: you burn shares and receive your
 share of every coin and stock.
 

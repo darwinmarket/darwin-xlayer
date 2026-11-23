@@ -36,7 +36,20 @@ There is no admin key over funds, no pause on exits, no upgradeable Darwin contr
 | Sequencer outage on X Layer | Chainlink's uptime feed: no buy while down or within an hour of a restart | `test_sequencerDownClosesBuying` |
 | A wrapped asset loses its backing | xBTC/BTC exchange rate below 0.995 trips the breaker | `DarwinGuard.facts` |
 | A dead feed traps holders | redeeming in kind needs no oracle, no circuit, no router | `test_staleFeedTripsTheBreakerButExitsStayOpen` |
-| US stock market closed | stock legs refused as closed; mixed baskets buy their open markets; no breaker trip | `WeekendTest` |
+| US stock market closed | a basket holding a stock outside its session takes no buy (its value would use Friday's price and a buyer could take Monday's gap) and its stock legs cannot be sold; redeeming in kind stays open; no breaker trip | `WeekendTest`, `test_noBuyWhileAHeldStockIsClosed` |
+| A contract posing as a basket | the router only trades baskets launched by its studio | `test_fakeBasketIsRefused` |
+| Chainlink's daily feeds land seconds late | 24 h heartbeats get 15 minutes of margin, so nobody can trip every breaker in those seconds | `test_lateDailyFeedDoesNotTripTheBreaker` |
+| Dust legs that cannot be priced | allocations under 1 cent go to the largest leg | `test_dustLegsGoToTheLargestLeg` |
+| Draining the studio's transistors | a fee per gate (0.00005 OKB) to the treasury | `test_launchFeeGrowsWithGates` |
+| A methodology that funds stale or closed coins | every launch and every proposal is evaluated on all 16 inputs: 0 for ineligible coins, sum 100, at most 400 gates | `test_methodologyMustIgnoreIneligibleCoins`, `test_proposalIsCheckedLikeALaunch` |
+
+## Audit
+
+Before mainnet, three independent reviews ran on 2026-11-23: contracts (security and every mainnet
+address, decimal and pool checked on chain), circuits (all 16,384 policy inputs, 512 breaker cases
+and every methodology evaluated on the real TapeOut processor and against the TAP-02 reference, 0
+mismatches) and the app (transactions, RPC limits, phishing). No critical issue; every medium and
+low finding is fixed and has a regression test in `contracts/test/Regression.t.sol`.
 
 ## Not covered
 

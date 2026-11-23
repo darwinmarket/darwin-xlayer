@@ -73,14 +73,17 @@ fresh, pool near its oracle). Output: the coin's target weight in percent (7 bit
 band (4 bits). An ineligible coin gets 0%, so new money goes to the others until it recovers. On a
 Sunday, a basket holding both stocks and crypto buys only its crypto.
 
-The basket reads its targets from its circuit on every trade. A new methodology can only be applied
+The band is displayed with the basket; the policy circuit applies the same 5 pp band to every
+basket. The basket reads its targets from its circuit on every trade. A new methodology can only be applied
 3 days after the owner proposes it, and its netlist hash is pinned when proposed.
 
 ### Anyone can design one
 
 `DarwinStudio.createStrategy` takes a methodology netlist built in the browser, tapes it out, and
-checks on chain, by evaluating the new circuit, that it really is a methodology for the chosen
-coins: listed coins get weights summing to 100% under one band, and indexes beyond them get nothing.
+checks on chain, by evaluating the new circuit on all 16 inputs, that it really is a methodology for
+the chosen coins: listed coins get weights summing to 100% under one band when eligible and 0 when
+not, indexes beyond them get nothing, and it has at most 400 gates. The same check runs on every
+later methodology proposal. A launch costs the processor's tape-out fee plus 0.00005 OKB per gate.
 It then deploys the basket and hands the circuit's NFT to its creator, who earns a third of the
 basket's fees.
 
