@@ -84,6 +84,7 @@ contract DarwinRouter is ReentrancyGuard {
         uint8 drift,
         bool better,
         bool open,
+        bool pool,
         uint8 severity
     );
 
@@ -112,14 +113,15 @@ contract DarwinRouter is ReentrancyGuard {
         _;
     }
 
-    /// A coin the basket holds whose market is closed (zero if none). While one exists, nobody can
-    /// buy: the basket's value would use a price frozen since the market closed, and a buyer could
-    /// take the reopening gap from the holders. Selling waits too; redeeming in kind never does.
+    /// A coin the basket holds without a live price (zero if none): a stock whose Chainlink feed is
+    /// frozen and whose pool cannot price it either. While one exists, nobody can buy: the
+    /// basket's value would use a frozen price, and a buyer could take the reopening gap from the
+    /// holders. Its legs cannot be sold either; redeeming in kind never waits.
     function closedHolding(DarwinBasket basket) public view returns (address) {
         address[] memory coins = basket.coinList();
         uint256[] memory b = basket.balances();
         for (uint256 i; i < coins.length; i++) {
-            if (b[i] > 0 && !oracle.sessionOpen(coins[i])) return coins[i];
+            if (b[i] > 0 && !oracle.tradable(coins[i])) return coins[i];
         }
         return address(0);
     }
@@ -395,10 +397,11 @@ contract DarwinRouter is ReentrancyGuard {
     ) internal {
         uint8 age = oracle.ageClass(coin);
         bool open = oracle.sessionOpen(coin);
+        bool pool = oracle.poolPriced(coin);
         (bool allow, uint8 severity) =
-            guard.policy(DarwinGuard.Leg(dev, age, oracle.sequencerUp(), isBuy, drift, better, open));
+            guard.policy(DarwinGuard.Leg(dev, age, oracle.sequencerUp(), isBuy, drift, better, open, pool));
         if (!allow) revert Refused(coin, severity, dev, drift);
-        emit Leg(basket, coin, isBuy, amountIn, amountOut, dev, age, drift, better, open, severity);
+        emit Leg(basket, coin, isBuy, amountIn, amountOut, dev, age, drift, better, open, pool, severity);
     }
 
     /// Swap along a Uniswap v3 path. The minimum out is the oracle's amount less `steps` x 0.25%:

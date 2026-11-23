@@ -26,7 +26,7 @@ contract DarwinGuard {
     uint256 public immutable breakerCircuit;
 
     /// Circuit shapes (circuits/src/darwin.ts).
-    uint32 internal constant POLICY_IN = 14;
+    uint32 internal constant POLICY_IN = 15;
     uint32 internal constant POLICY_OUT = 3;
     uint32 internal constant BREAKER_IN = 5;
     uint32 internal constant BREAKER_OUT = 4;
@@ -138,17 +138,19 @@ contract DarwinGuard {
         uint8 drift; // |weight after - target| in pp, saturating at 15
         bool better; // the trade does not move the coin further from its target
         bool open; // the coin's market is in session
+        bool pool; // the coin is priced by its own pool (a stock whose Chainlink feed is frozen)
     }
 
     function policyInputs(Leg memory l) public pure returns (uint256 v) {
         v = uint256(l.dev > 15 ? 15 : l.dev) | (uint256(l.age > 3 ? 3 : l.age) << 4)
             | (uint256(l.seqUp ? 1 : 0) << 6) | (uint256(l.isBuy ? 1 : 0) << 7)
             | (uint256(l.drift > 15 ? 15 : l.drift) << 8) | (uint256(l.better ? 1 : 0) << 12)
-            | (uint256(l.open ? 1 : 0) << 13);
+            | (uint256(l.open ? 1 : 0) << 13) | (uint256(l.pool ? 1 : 0) << 14);
     }
 
     /// The circuit's verdict on one leg: allowed, and a severity (0 clean, 1 warned, 2 refused,
-    /// 3 refused because the market itself is broken). A stock outside its session is refused (2).
+    /// 3 refused because the market itself is broken). A stock outside its session is refused (2)
+    /// unless its pool prices it; a pool-priced leg must stay closer to its price.
     function policy(Leg memory l) public view returns (bool allow, uint8 severity) {
         uint256 out = _eval(policyCircuit, _packed(policyInputs(l), POLICY_IN));
         allow = out & 1 == 1;
@@ -159,7 +161,7 @@ contract DarwinGuard {
 
     /// The five facts of the breaker for a basket, as its input bits. They describe the market as a
     /// whole; one coin's trouble only makes that coin ineligible (see `eligible`).
-    ///   0 feeds alive: the quote's feed under an hour old, every coin in session within heartbeat + grace
+    ///   0 feeds alive: the quote's feed under an hour old, every crypto coin within heartbeat + grace
     ///   1 the X Layer sequencer is up
     ///   2 the quote stablecoin is on its peg
     ///   3 no pool more than 10% away from its oracle (30-minute TWAP)
@@ -171,9 +173,14 @@ contract DarwinGuard {
         bool reservesOk = true;
         for (uint256 i; i < coins.length; i++) {
             if (!oracle.reserveOk(coins[i])) reservesOk = false;
-            // a closed stock market is not an incident: its feed and pool rest until it opens
-            if (!oracle.sessionOpen(coins[i])) continue;
-            if (oracle.ageClass(coins[i]) > 2) alive = false;
+            // a stock's market closing, or its feed resting, is not an incident: the stock is then
+            // priced by its pool or simply gets no new money, coin by coin (see `eligible`)
+            if (oracle.isStock(coins[i])) {
+                if (!oracle.sessionOpen(coins[i]) || oracle.poolPriced(coins[i])) continue;
+                if (oracle.ageClass(coins[i]) > 2) continue;
+            } else if (oracle.ageClass(coins[i]) > 2) {
+                alive = false;
+            }
             // a coin without a TWAP history is never judged on its spot: one flash loan must not trip a basket
             (bool ok, uint256 bps) = twapDeviationBps(coins[i]);
             if (ok && bps > MAX_BREAKER_DEV_BPS) pricesOk = false;
@@ -245,10 +252,10 @@ contract DarwinGuard {
 
     // ---- 3. methodologies ------------------------------------------------------------------------
 
-    /// A coin is eligible for new money when its market is in session, its feed is fresh and its
-    /// pool sits on its oracle.
+    /// A coin is eligible for new money when it has a live price (in session, or priced by its pool),
+    /// that price is fresh and its pool sits on it.
     function eligible(address coin) public view returns (bool) {
-        return oracle.sessionOpen(coin) && oracle.ageClass(coin) <= 1 && coinPriceOk(coin);
+        return oracle.tradable(coin) && oracle.ageClass(coin) <= 1 && coinPriceOk(coin);
     }
 
     /// Target weight (percent) and band (pp) of coin `index` under methodology circuit `id`.
