@@ -67,7 +67,7 @@ export function TradePanel({ b, markets, onTraded }: { b: BasketInfo; markets: M
   const stocksClosed = b.hasStocks && !usOpen(t);
   const tripped = b.breaker.tripped || !!b.preview?.tripped || !b.buyOpen;
   const noEligible = b.holdings.every((h) => !h.eligible);
-  // outside the session a stock is priced by its own pool (1-hour TWAP, within bounds); the router
+  // outside the session a stock is priced by its own pool (spot price, within 1% of its 1-hour TWAP); the router
   // refuses any buy while the basket holds a coin with no live price at all (MarketClosed), and
   // the policy refuses to sell such a coin
   const heldStockClosed = b.closedHolding !== null;
@@ -217,7 +217,7 @@ export function TradePanel({ b, markets, onTraded }: { b: BasketInfo; markets: M
       {!tripped && !heldStockClosed && poolPriced && (
         <div className="notice notice-info" data-testid="state-pool-priced">
           <strong>{stocksClosed ? "Weekend pricing." : "Pool pricing."}</strong> Chainlink&apos;s stock prices rest outside the US
-          session, but the xStocks pools keep trading: they are priced by their own pool&apos;s one-hour average, and the trade-policy
+          session, but the xStocks pools keep trading: they are priced at their own pool&apos;s current price (accepted within 1% of its one-hour average), and the trade-policy
           circuit holds each leg to 1.5% of it on a buy, 2% on a sell.
         </div>
       )}

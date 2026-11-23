@@ -21,7 +21,7 @@ export type Market = {
   updatedAt: number;
   ageClass: number;
   open: boolean;
-  /** A stock priced by its own pool's 1-hour TWAP while its Chainlink feed is frozen. */
+  /** A stock priced by its own pool's spot price (within 1% of its 1-hour TWAP) while its Chainlink feed is frozen. */
   poolPriced: boolean;
   /** Has a live price (in session, or pool-priced): it can be bought and sold. */
   tradable: boolean;

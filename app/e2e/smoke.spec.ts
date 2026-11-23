@@ -129,7 +129,7 @@ test.describe("with a wallet", () => {
     await injectWallet(page, seed);
     await openBasket(page, /Frontier/);
     test.skip(!(await page.getByTestId("session").first().innerText()).includes("CLOSED"), "US market open on this fork");
-    await expect(page.getByTestId("state-pool-priced")).toContainText(/one-hour average/);
+    await expect(page.getByTestId("state-pool-priced")).toContainText(/pool's current price/);
     await page.getByTestId("connect").first().click();
     await page.getByTestId("wallet-market.darwin.test").click();
     await page.getByTestId("amount").fill("200");

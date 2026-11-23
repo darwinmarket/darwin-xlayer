@@ -18,8 +18,7 @@ interface IGrowable {
 /// A Sunday on X Layer: the US stock market is closed and the xStocks' Chainlink feeds have been
 /// frozen since Saturday 01:00 UTC, but their Uniswap pools keep trading against 24/7 venues.
 /// Stocks are then priced by their own pool's spot price, within 1% of its one-hour TWAP and other
-/// bounds; a stock whose pool
-/// cannot be trusted has no price and takes no money. No breaker trips for a normal weekend.
+/// bounds; a stock whose pool cannot be trusted has no price and takes no money. No breaker trips for a normal weekend.
 contract WeekendTest is XLayerFork {
     function forkBlock() internal pure override returns (uint256) {
         return WEEKEND_BLOCK;
