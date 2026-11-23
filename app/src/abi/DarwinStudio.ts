@@ -12,6 +12,11 @@ export const darwinStudioAbi = [
         "name": "router_",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "treasury_",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "nonpayable"
@@ -19,6 +24,19 @@ export const darwinStudioAbi = [
   {
     "type": "receive",
     "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "GATE_FEE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -172,6 +190,25 @@ export const darwinStudioAbi = [
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "launchFee",
+    "inputs": [
+      {
+        "name": "gates",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -360,6 +397,19 @@ export const darwinStudioAbi = [
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "treasury",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
     "type": "event",
     "name": "StrategyCreated",
     "inputs": [
@@ -404,17 +454,6 @@ export const darwinStudioAbi = [
   },
   {
     "type": "error",
-    "name": "BadBand",
-    "inputs": [
-      {
-        "name": "band",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "BadCoins",
     "inputs": []
   },
@@ -422,22 +461,6 @@ export const darwinStudioAbi = [
     "type": "error",
     "name": "BadNetlist",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "BadWeights",
-    "inputs": [
-      {
-        "name": "index",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "weight",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ]
   },
   {
     "type": "error",

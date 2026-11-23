@@ -69,6 +69,19 @@ export const darwinGuardAbi = [
   },
   {
     "type": "function",
+    "name": "MAX_METHOD_GATES",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MAX_SPOT_DEV",
     "inputs": [],
     "outputs": [
@@ -200,6 +213,24 @@ export const darwinGuardAbi = [
         "name": "hash",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "checkWeights",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "n",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -589,6 +620,38 @@ export const darwinGuardAbi = [
   },
   {
     "type": "error",
+    "name": "BadBand",
+    "inputs": [
+      {
+        "name": "band",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "BadWeights",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "weight",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "eligible",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CircuitCallFailed",
     "inputs": [
       {
@@ -617,6 +680,17 @@ export const darwinGuardAbi = [
         "name": "implementation",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TooManyGates",
+    "inputs": [
+      {
+        "name": "gates",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ]
   },
