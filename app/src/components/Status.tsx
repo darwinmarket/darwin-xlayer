@@ -54,6 +54,17 @@ export function BreakerBadge({ b }: { b: BasketInfo }) {
   );
 }
 
+/** Darwin's own strategies, or a community creator's (names are chosen by their creator). */
+export function OriginTag({ b }: { b: Pick<BasketInfo, "official" | "creator"> }) {
+  return b.official ? (
+    <span className="tag tag-stocks" title="Launched by Darwin">Darwin</span>
+  ) : (
+    <span className="tag" title={`Community strategy by ${b.creator}: its name and rules are its creator's`}>
+      Community · {b.creator.slice(0, 6)}…{b.creator.slice(-4)}
+    </span>
+  );
+}
+
 export function KindTag({ kind }: { kind: BasketInfo["kind"] }) {
   return <span className={`tag tag-${kind}`}>{kind === "stocks" ? "Stocks" : kind === "crypto" ? "Crypto" : "Mixed"}</span>;
 }

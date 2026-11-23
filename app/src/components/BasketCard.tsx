@@ -3,7 +3,7 @@
 import Link from "next/link";
 import type { BasketInfo } from "@/lib/data";
 import { usd } from "@/lib/format";
-import { BreakerBadge, KindTag, SessionBadge } from "./Status";
+import { BreakerBadge, KindTag, OriginTag, SessionBadge } from "./Status";
 import { AssetLogo, LogoStack, Skeleton } from "./ui";
 import styles from "./BasketCard.module.css";
 
@@ -35,6 +35,7 @@ export function BasketCard({ b, chainTime }: { b: BasketInfo; chainTime: number 
           <span className="mono xsmall muted">{b.symbol}</span>
         </div>
         <KindTag kind={b.kind} />
+        <OriginTag b={b} />
       </div>
 
       <AllocationBar b={b} />

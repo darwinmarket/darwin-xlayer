@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { formatUnits, isAddress, type Address } from "viem";
 import { AllocationBar } from "@/components/BasketCard";
-import { BreakerBadge, KindTag, SessionBadge } from "@/components/Status";
+import { BreakerBadge, KindTag, OriginTag, SessionBadge } from "@/components/Status";
 import { TradePanel } from "@/components/TradePanel";
 import { AssetLogo, ErrorBox, LogoStack, RequireDeployment, Skeleton } from "@/components/ui";
 import { FACTS, type BasketInfo } from "@/lib/data";
@@ -23,6 +23,13 @@ function Inner({ address }: { address: Address }) {
   if (q.error) return <ErrorBox error={q.error} retry={q.refresh} />;
   if (!q.data) return <BasketSkeleton />;
   const { basket: b, markets } = q.data;
+  if (!b.genuine)
+    return (
+      <ErrorBox
+        title="Not a Darwin basket"
+        error={`${address} was not launched by Darwin's studio (${DEPLOYMENT?.studio}). Do not send it funds: a look-alike contract could keep them.`}
+      />
+    );
   return (
     <div className="stack-l">
       <Header b={b} chainTime={markets.chainTime} />
@@ -57,6 +64,7 @@ function Header({ b, chainTime }: { b: BasketInfo; chainTime: number }) {
           <div className="row-wrap" style={{ marginTop: 6 }}>
             <span className="mono small muted">{b.symbol}</span>
             <KindTag kind={b.kind} />
+            <OriginTag b={b} />
             {b.hasStocks && <SessionBadge chainTime={chainTime} />}
             <BreakerBadge b={b} />
           </div>
