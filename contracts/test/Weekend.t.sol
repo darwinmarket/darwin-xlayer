@@ -3,11 +3,13 @@ pragma solidity 0.8.28;
 
 import {Vm} from "forge-std/Vm.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {XLayerFork} from "./Base.t.sol";
 import {XLayer} from "../script/XLayer.sol";
 import {DarwinBasket} from "../src/DarwinBasket.sol";
 import {DarwinRouter} from "../src/DarwinRouter.sol";
 import {DarwinGuard} from "../src/DarwinGuard.sol";
+import {ISwapRouter02} from "../src/interfaces/External.sol";
 
 interface IGrowable {
     function increaseObservationCardinalityNext(uint16 next) external;
@@ -15,7 +17,8 @@ interface IGrowable {
 
 /// A Sunday on X Layer: the US stock market is closed and the xStocks' Chainlink feeds have been
 /// frozen since Saturday 01:00 UTC, but their Uniswap pools keep trading against 24/7 venues.
-/// Stocks are then priced by their own pool's one-hour TWAP, within bounds; a stock whose pool
+/// Stocks are then priced by their own pool's spot price, within 1% of its one-hour TWAP and other
+/// bounds; a stock whose pool
 /// cannot be trusted has no price and takes no money. No breaker trips for a normal weekend.
 contract WeekendTest is XLayerFork {
     function forkBlock() internal pure override returns (uint256) {
@@ -53,7 +56,7 @@ contract WeekendTest is XLayerFork {
             (uint256 p,) = oracle.price(stocks[i]);
             (uint256 friday,) = oracle.chainlinkPrice(stocks[i]);
             assertApproxEqRel(p, friday, 0.1e18, "within 10% of the last Chainlink price");
-            assertApproxEqRel(p, oracle.spotPrice(stocks[i]), 0.01e18, "spot within 1% of the TWAP");
+            assertEq(p, oracle.spotPrice(stocks[i]), "the pool's spot price");
         }
         assertFalse(oracle.poolPriced(XBTC), "crypto keeps Chainlink");
     }
@@ -65,6 +68,45 @@ contract WeekendTest is XLayerFork {
         (uint256 friday,) = oracle.chainlinkPrice(WNVDAX);
         assertGt(p, friday, "NVIDIA traded up over the weekend");
         assertGt((p - friday) * 10_000 / friday, 100, "by more than 1%");
+    }
+
+    /// A pool-priced stock is worth exactly what its pool pays right now: the spot price, not an
+    /// average (the spot is only accepted within 1% of the pool's hour).
+    function test_aPoolPricedStockIsWorthItsSpot() public view {
+        address[5] memory stocks = [WNVDAX, WSPYX, WQQQX, WTSLAX, WSPCXX];
+        for (uint256 i; i < stocks.length; i++) {
+            (uint256 p, uint256 at) = oracle.price(stocks[i]);
+            assertEq(p, oracle.spotPrice(stocks[i]), "the pool's spot price");
+            assertLe(vm.getBlockTimestamp() - at, 6 hours, "as of the pool's last trade");
+        }
+    }
+
+    /// Someone trades the pool on a Sunday: the next buyer is valued at the new price at once.
+    function test_thePriceFollowsTheLastTrade() public {
+        (uint256 before,) = oracle.price(WNVDAX);
+        _pushPool(USDG, WNVDAX, 500, 2_000e6); // a small buy of NVIDIA
+        assertTrue(oracle.poolPriced(WNVDAX), "a small trade keeps the price");
+        (uint256 p, uint256 at) = oracle.price(WNVDAX);
+        assertGt(p, before, "the price moved with the trade");
+        assertEq(p, oracle.spotPrice(WNVDAX));
+        assertEq(at, vm.getBlockTimestamp(), "as of this block");
+    }
+
+    /// The best a manipulator can do in one transaction: push the NVIDIA pool down as far as it
+    /// stays priced (just under 1% from its hour), buy Frontier cheap, push the pool back. The
+    /// extra shares are worth less than the fees and the push costs, at every size the pools take.
+    function test_pushingInsideTheBandDoesNotPay() public {
+        uint256[4] memory sizes = [uint256(1_000e6), 10_000e6, 25_000e6, 50_000e6];
+        uint256 refused;
+        for (uint256 i; i < sizes.length; i++) {
+            uint256 snap = vm.snapshotState();
+            (int256 gain, uint256 pushed, bool ok) = _flashPushThenBuy(sizes[i]);
+            assertGt(pushed, 50, "the pool was pushed");
+            if (ok) assertLt(gain, 0, "the attack loses money");
+            else refused++;
+            vm.revertToState(snap);
+        }
+        assertLt(refused, sizes.length, "small attacks went through, and lost");
     }
 
     function test_aStockFollowsItsPairPrice() public view {
@@ -84,11 +126,13 @@ contract WeekendTest is XLayerFork {
         uint256 shares = _buy(alice, frontier, USDG, 1_000e6);
         uint256 pools;
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        bytes32 sig = keccak256("Leg(address,address,bool,uint256,uint256,uint8,uint8,uint8,bool,bool,bool,uint8)");
+        bytes32 sig =
+            keccak256("Leg(address,address,bool,uint256,uint256,uint8,uint8,uint8,bool,bool,bool,uint8)");
         for (uint256 i; i < logs.length; i++) {
             if (logs[i].emitter != address(router) || logs[i].topics[0] != sig) continue;
-            (,,, uint8 dev,,,, bool open, bool pool, uint8 severity) =
-                abi.decode(logs[i].data, (bool, uint256, uint256, uint8, uint8, uint8, bool, bool, bool, uint8));
+            (,,, uint8 dev,,,, bool open, bool pool, uint8 severity) = abi.decode(
+                logs[i].data, (bool, uint256, uint256, uint8, uint8, uint8, bool, bool, bool, uint8)
+            );
             assertFalse(open, "the market is closed");
             assertTrue(pool, "the circuit was told the price is the pool's");
             assertLe(dev, 6, "within 1.5% of the pool's hour");
@@ -219,6 +263,67 @@ contract WeekendTest is XLayerFork {
 
     function attacker() internal returns (address) {
         return makeAddr("attacker");
+    }
+
+    /// Sell NVIDIA into its pool in steps while it stays priced, buy Frontier for `buyUsdg`, buy
+    /// back the NVIDIA sold, redeem the shares in kind. Everything is valued at the prices from
+    /// before the attack (the fair prices: the pools moved only because of the attacker). Returns
+    /// the attacker's gain in USD (18 decimals), how far the push moved the price (bps) and whether
+    /// the buy went through.
+    function _flashPushThenBuy(uint256 buyUsdg) internal returns (int256 gain, uint256 pushedBps, bool ok) {
+        address a = attacker();
+        address[] memory coins = frontier.coinList();
+        uint256[] memory fair = new uint256[](coins.length);
+        for (uint256 k; k < coins.length; k++) {
+            (fair[k],) = oracle.price(coins[k]);
+        }
+        (uint256 p0,) = oracle.price(WNVDAX);
+        deal(WNVDAX, a, 1_000e18);
+        _fund(a, USDG, buyUsdg);
+        vm.startPrank(a);
+        IERC20(WNVDAX).approve(XLayer.SWAP_ROUTER, type(uint256).max);
+        IERC20(USDG).approve(XLayer.SWAP_ROUTER, type(uint256).max);
+        uint256 got;
+        for (uint256 sold; sold < 1_000e18; sold += 2e18) {
+            uint256 snap = vm.snapshotState();
+            uint256 out = _swap1(WNVDAX, USDG, 2e18, a);
+            if (!oracle.poolPriced(WNVDAX)) {
+                vm.revertToState(snap);
+                break;
+            }
+            got += out;
+        }
+        (uint256 pLow,) = oracle.price(WNVDAX);
+        pushedBps = (p0 - pLow) * 10_000 / p0;
+        uint256 shares;
+        try router.buy(frontier, USDG, buyUsdg, 0, vm.getBlockTimestamp(), a) returns (uint256 s_) {
+            shares = s_;
+        } catch {
+            vm.stopPrank();
+            emit log_named_uint("refused by the circuit, buy (USDG)", buyUsdg / 1e6);
+            return (0, pushedBps, false); // a leg strayed too far from the price: no trade
+        }
+        ok = true;
+        _swap1(USDG, WNVDAX, got, a); // unwind with what the push paid
+        frontier.redeem(shares, a);
+        vm.stopPrank();
+        gain = int256(IERC20(USDG).balanceOf(a) * 1e12) - int256(buyUsdg * 1e12);
+        for (uint256 k; k < coins.length; k++) {
+            int256 held = int256(IERC20(coins[k]).balanceOf(a));
+            if (coins[k] == WNVDAX) held -= 1_000e18; // net of the NVIDIA it started with
+            gain += held * int256(fair[k]) / int256(10 ** IERC20Metadata(coins[k]).decimals());
+        }
+        emit log_named_uint("buy (USDG)", buyUsdg / 1e6);
+        emit log_named_uint("push (bps)", pushedBps);
+        emit log_named_int("gain (USD, 18 dec)", gain);
+    }
+
+    function _swap1(address tokenIn, address tokenOut, uint256 amount, address to)
+        internal
+        returns (uint256)
+    {
+        return ISwapRouter02(XLayer.SWAP_ROUTER)
+            .exactInputSingle(ISwapRouter02.ExactInputSingleParams(tokenIn, tokenOut, 500, to, amount, 0, 0));
     }
 
     function _friday(address stock) internal view returns (uint256 p) {

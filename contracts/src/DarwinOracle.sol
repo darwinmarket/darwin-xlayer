@@ -365,7 +365,6 @@ contract DarwinOracle {
         (usd,) = price(token);
     }
 
-
     /// USD per whole token from a pool price (token1 base units per token0 base unit, Q128).
     function _toUsd(Market memory m, uint256 priceX128) internal view returns (uint256) {
         if (priceX128 == 0) revert BadPrice(m.token);
